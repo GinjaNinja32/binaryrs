@@ -57,6 +57,8 @@ impl Context {
                 nest_variants: false,
                 nest_ty: None,
                 nest_le: None,
+                flags: false,
+                flag_value: None,
             },
         };
 

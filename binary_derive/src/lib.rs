@@ -7,7 +7,8 @@ use proc_macro::TokenStream;
 use syn::export::TokenStream2;
 use syn::spanned::Spanned;
 use syn::{
-    Data, DeriveInput, Fields, Generics, Ident, Index, LitInt, Member, Path, Type, WherePredicate,
+    Data, DeriveInput, Fields, Generics, Ident, Index, IntSuffix, LitInt, Member, Path, Type,
+    WherePredicate,
 };
 
 mod context;
@@ -15,13 +16,16 @@ use context::{Context, Environment, Level};
 mod helpers;
 
 struct SelfAttrs {
-    tag_ty: Option<(syn::Type, syn::IntSuffix)>,
-    tag_le: Option<bool>,
+    tag_ty: Option<(Type, IntSuffix)>, // enum, based on repr()
+    tag_le: Option<bool>,              // enum
 
-    nest_variants: bool,
-    nest: bool,
-    nest_ty: Option<helpers::SizeType>,
-    nest_le: Option<bool>,
+    nest_variants: bool,                // enum
+    nest: bool,                         // enum variant, in enum with nest_variants true
+    nest_ty: Option<helpers::SizeType>, // enum
+    nest_le: Option<bool>,              // enum
+
+    flags: bool,             // field
+    flag_value: Option<u64>, // field
 }
 
 #[proc_macro_derive(BinSerialize, attributes(binary))]
@@ -220,12 +224,14 @@ fn decode_type(
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields, errors) = decode_fields(&context, generics, s.fields);
+            let (generics, decodes, transfers, errors) =
+                decode_fields(&context, generics, s.fields);
             (
                 generics,
                 quote! {
                     #errors
-                    Self #(#fields)*
+                    #decodes
+                    Self #transfers
                 },
             )
         }
@@ -262,7 +268,8 @@ fn decode_type(
                 tag += 1;
                 let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
                 let name = v.ident;
-                let (newgen, fields, errors) = decode_fields(&context, generics, v.fields);
+                let (newgen, decodes, transfers, errors) =
+                    decode_fields(&context, generics, v.fields);
                 generics = newgen;
 
                 let pre = if context.self_attrs.nest {
@@ -283,7 +290,8 @@ fn decode_type(
                         #attr_errors
                         #errors
                         #pre
-                        #ident::#name#fields
+                        #decodes
+                        #ident::#name#transfers
                     }
                 });
             }
@@ -306,11 +314,13 @@ fn encode_fields(
     fields: Fields,
 ) -> (Generics, Vec<TokenStream2>) {
     let mut encodes = vec![];
+    let mut tail = None;
     let fields = match fields {
         Fields::Named(n) => n.named,
         Fields::Unnamed(u) => u.unnamed,
         Fields::Unit => return (generics, vec![]),
     };
+    let mut flags_defined = false;
     for (i, f) in fields.into_iter().enumerate() {
         let span = f.span();
         let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
@@ -319,20 +329,25 @@ fn encode_fields(
             .make_where_clause()
             .predicates
             .push(make_generic_bound(
-                f.ty,
+                if context.self_attrs.flag_value.is_some() {
+                    let ty = &f.ty;
+                    parse_quote! {<#ty as ::binary::DeOption>::Assoc}
+                } else {
+                    f.ty.clone()
+                },
                 parse_quote! {::binary::BinSerialize},
             ));
 
         let ident: TokenStream2 = if context.env == Environment::Enum {
-            let (name, span) = match f.ident {
+            let (name, span) = match &f.ident {
                 Some(n) => (format!("self_{}", n), n.span()),
                 None => (format!("self_{}", i), span),
             };
             let new_ident = Ident::new(&name, span);
             quote! { #new_ident }
         } else {
-            let ident = match f.ident {
-                Some(i) => Member::Named(i),
+            let ident = match &f.ident {
+                Some(i) => Member::Named(i.clone()),
                 _ => Member::Unnamed(Index {
                     index: i as u32,
                     span,
@@ -342,10 +357,43 @@ fn encode_fields(
         };
 
         let attrs = context.build_attrs();
-        encodes.push(quote! {
-            ::binary::BinSerialize::encode_to(&#ident, buf, #attrs)?;
-            #attr_errors
-        });
+
+        if context.self_attrs.flags {
+            if flags_defined {
+                let span = f.span();
+                encodes.push(quote_spanned! {span=>
+                    compile_error!("multiple #[binary(flags)] attributes in this struct");
+                });
+            }
+            flags_defined = true;
+            let ty = &f.ty;
+            encodes.push(quote! {
+                let mut flags: #ty = 0;
+                let mut flagged = vec![];
+                let unflagged_buf = buf;
+                let buf: &mut dyn ::binary::BufMut = &mut flagged;
+            });
+            tail = Some(quote! {
+                <#ty as ::binary::BinSerialize>::encode_to(&flags, unflagged_buf, #attrs)?;
+                <::std::vec::Vec<u8> as ::binary::BinSerialize>::encode_to(&flagged, unflagged_buf, ::binary::attr::Attrs::zero())?;
+            });
+        } else if let Some(v) = context.self_attrs.flag_value {
+            let v = LitInt::new(v, IntSuffix::None, span);
+            encodes.push(quote! {
+                if let Some(v) = &#ident {
+                    flags |= #v;
+                    ::binary::BinSerialize::encode_to(v, buf, #attrs)?;
+                }
+            });
+        } else {
+            encodes.push(quote! {
+                ::binary::BinSerialize::encode_to(&#ident, buf, #attrs)?;
+                #attr_errors
+            });
+        }
+    }
+    if let Some(tail) = tail {
+        encodes.push(tail);
     }
     (generics, encodes)
 }
@@ -354,15 +402,17 @@ fn decode_fields(
     context: &Context,
     mut generics: Generics,
     fields: Fields,
-) -> (Generics, TokenStream2, TokenStream2) {
+) -> (Generics, TokenStream2, TokenStream2, TokenStream2) {
     let mut decodes: Vec<TokenStream2> = vec![];
+    let mut transfers: Vec<TokenStream2> = vec![];
     let mut errors: Vec<TokenStream2> = vec![];
     let fields_list = match &fields {
         Fields::Named(n) => &n.named,
         Fields::Unnamed(u) => &u.unnamed,
-        Fields::Unit => return (generics, quote! {}, quote! {}),
+        Fields::Unit => return (generics, quote! {}, quote! {}, quote! {}),
     };
-    for f in fields_list {
+    let mut flags_defined = false;
+    for (i, f) in fields_list.into_iter().enumerate() {
         let ty = f.ty.clone();
         let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
 
@@ -370,27 +420,78 @@ fn decode_fields(
             .make_where_clause()
             .predicates
             .push(make_generic_bound(
-                f.ty.clone(),
+                if context.self_attrs.flag_value.is_some() {
+                    let ty = &f.ty;
+                    parse_quote! {<#ty as ::binary::DeOption>::Assoc}
+                } else {
+                    f.ty.clone()
+                },
                 parse_quote! {::binary::BinDeserialize},
             ));
 
-        let ident = &f.ident;
-        let colon = if ident.is_some() {
+        let struct_ident = &f.ident;
+        let colon = if struct_ident.is_some() {
             Some(quote! {:})
         } else {
             None
         };
 
+        let ident: TokenStream2 = {
+            let (name, span) = match &f.ident {
+                Some(n) => (format!("self_{}", n), n.span()),
+                None => (format!("self_{}", i), f.span()),
+            };
+            let new_ident = Ident::new(&name, span);
+            quote! { #new_ident }
+        };
+
         let attrs = context.build_attrs();
-        decodes.push(quote! {
-            #ident#colon <#ty as ::binary::BinDeserialize>::decode_from(buf, #attrs)?,
+        if let Some(v) = context.self_attrs.flag_value {
+            let span = ident.span();
+            let v = LitInt::new(v, IntSuffix::None, span);
+            decodes.push(quote! {
+                let #ident = if (flags & #v) != 0 {
+                    Some(<<#ty as ::binary::DeOption>::Assoc as ::binary::BinDeserialize>::decode_from(buf, #attrs)?)
+                } else {
+                    None
+                };
+            });
+        } else {
+            decodes.push(quote! {
+                let #ident = <#ty as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
+            });
+        }
+        transfers.push(quote! {
+            #struct_ident#colon #ident,
         });
+        if context.self_attrs.flags {
+            if flags_defined {
+                let span = f.span();
+                decodes.push(quote_spanned! {span=>
+                    compile_error!("multiple #[binary(flags)] attributes in this struct");
+                });
+            }
+            flags_defined = true;
+            decodes.push(quote! {
+                let flags = #ident;
+            });
+        }
         errors.push(attr_errors);
     }
     let errors = quote! { #(#errors)* };
     match fields {
-        Fields::Named(_) => (generics, quote! { { #(#decodes)* } }, errors),
-        Fields::Unnamed(_) => (generics, quote! { ( #(#decodes)* ) }, errors),
+        Fields::Named(_) => (
+            generics,
+            quote! { #(#decodes)* },
+            quote! { { #(#transfers)* } },
+            errors,
+        ),
+        Fields::Unnamed(_) => (
+            generics,
+            quote! { #(#decodes)* },
+            quote! { ( #(#transfers)* ) },
+            errors,
+        ),
         _ => unreachable!(),
     }
 }

@@ -135,6 +135,67 @@ fn test_enum_nested() {
     );
 }
 
+#[test]
+fn test_flags() {
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    struct Flags {
+        #[binary(flags)]
+        flags: u8,
+        #[binary(flags(0x01))]
+        field1: Option<u16>,
+        #[binary(flags(0x02))]
+        field2: Option<u8>,
+        #[binary(flags(0x04))]
+        field4: Option<String>,
+    }
+
+    roundtrip!(
+        Flags {
+            flags: 1,
+            field1: Some(1000),
+            field2: None,
+            field4: None
+        },
+        vec![1, 232, 3]
+    );
+    roundtrip!(
+        Flags {
+            flags: 2,
+            field1: None,
+            field2: Some(42),
+            field4: None,
+        },
+        vec![2, 42]
+    );
+    roundtrip!(
+        Flags {
+            flags: 4,
+            field1: None,
+            field2: None,
+            field4: Some("test".to_string()),
+        },
+        vec![4, 116, 101, 115, 116, 0]
+    );
+    roundtrip!(
+        Flags {
+            flags: 7,
+            field1: Some(1000),
+            field2: Some(42),
+            field4: Some("test".to_string()),
+        },
+        vec![7, 232, 3, 42, 116, 101, 115, 116, 0]
+    );
+    assert_eq!(
+        binary::encode_to_bytes(Flags {
+            flags: 0, // encodes as 7 due to Some() fields below
+            field1: Some(1000),
+            field2: Some(42),
+            field4: Some("test".to_string())
+        }),
+        Ok(vec![7, 232, 3, 42, 116, 101, 115, 116, 0])
+    );
+}
+
 #[derive(BinSerialize, BinDeserialize, PartialEq, Eq, Debug)]
 struct TestStruct {
     #[binary(len(u8))]

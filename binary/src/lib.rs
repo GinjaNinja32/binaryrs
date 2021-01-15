@@ -24,3 +24,16 @@ pub trait Buf: bytes::Buf {
     }
 }
 impl<T: bytes::Buf> Buf for T {}
+
+// DeOption helper, for binary_derive to un-Option-ify types for decoding when using flags
+pub trait DeOption: private::Sealed {
+    type Assoc;
+}
+impl<T> DeOption for Option<T> {
+    type Assoc = T;
+}
+mod private {
+    pub trait Sealed {}
+
+    impl<T> Sealed for Option<T> {}
+}

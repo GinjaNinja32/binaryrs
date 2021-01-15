@@ -71,6 +71,8 @@ pub(crate) fn parse_attrs(
         nest_variants: false,
         nest_ty: None,
         nest_le: None,
+        flags: false,
+        flag_value: None,
     };
     let mut errors = vec![];
 
@@ -141,6 +143,15 @@ pub(crate) fn parse_attrs(
                                                 });
                                             } else {
                                                 self_attrs.nest_variants = true;
+                                            }
+                                        }
+                                        "flags" => {
+                                            if context.1 != Level::Field {
+                                                errors.push(quote_spanned! {span=>
+                                                    compile_error!("illegal attribute target");
+                                                });
+                                            } else {
+                                                self_attrs.flags = true;
                                             }
                                         }
                                         _ => {
@@ -272,6 +283,29 @@ pub(crate) fn parse_attrs(
                                                             compile_error!("illegal attribute form");
                                                         });
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "flags" => {
+                                        let span = list.span();
+                                        if context.1 != Level::Field {
+                                            errors.push(quote_spanned! {span=>
+                                                compile_error!("illegal attribute target");
+                                            });
+                                        } else if list.nested.len() != 1 {
+                                            errors.push(quote_spanned! {span=>
+                                                compile_error!("illegal attribute argument");
+                                            });
+                                        } else {
+                                            match &list.nested[0] {
+                                                NestedMeta::Literal(Lit::Int(i)) => {
+                                                    self_attrs.flag_value = Some(i.value());
+                                                }
+                                                _ => {
+                                                    errors.push(quote_spanned! {span=>
+                                                        compile_error!("illegal attribute argument");
+                                                    });
                                                 }
                                             }
                                         }
