@@ -7,13 +7,12 @@ use proc_macro::TokenStream;
 use syn::export::TokenStream2;
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Data, DeriveInput, Fields, Generics, Ident, Index, IntSuffix, Lit, LitInt, Member,
-    Meta, MetaNameValue, NestedMeta, Path, Type, WherePredicate,
+    Attribute, Data, DeriveInput, Expr, Fields, Generics, Ident, Index, IntSuffix, Lit, LitInt,
+    Member, Meta, MetaNameValue, NestedMeta, Path, Type, WherePredicate,
 };
 
 struct SelfAttrs {
-    tag: Option<u64>,
-    tag_ty: Option<syn::IntSuffix>,
+    tag_ty: Option<(syn::Type, syn::IntSuffix)>,
     tag_le: Option<bool>,
 }
 
@@ -44,7 +43,6 @@ fn parse_attrs(
 ) -> (Vec<TokenStream2>, SelfAttrs, Vec<TokenStream2>) {
     let mut attrs = vec![];
     let mut self_attrs = SelfAttrs {
-        tag: None,
         tag_ty: None,
         tag_le: None,
     };
@@ -69,7 +67,68 @@ fn parse_attrs(
                 continue;
             }
             Meta::List(l) => {
-                if l.ident == "binary" {
+                if l.ident == "repr" {
+                    if context != Context::EnumHeader {
+                        continue; // ignore, this isn't our attr to complain about
+                    }
+                    for elem in &l.nested {
+                        match elem {
+                            NestedMeta::Meta(m) => match &m {
+                                Meta::Word(w) => {
+                                    let span = w.span();
+                                    let s = w.to_string();
+                                    match s.as_str() {
+                                        "u8" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {u8}, IntSuffix::U8))
+                                        }
+                                        "u16" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {u16}, IntSuffix::U16))
+                                        }
+                                        "u32" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {u32}, IntSuffix::U32))
+                                        }
+                                        "u64" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {u64}, IntSuffix::U64))
+                                        }
+                                        "usize" => {
+                                            errors.push(quote_spanned!{span=>
+                                                compile_error!("Bin(De)Serialize requires enums to have repr(iN) or repr(uN), not repr(usize)");
+                                            });
+                                        }
+                                        "i8" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {i8}, IntSuffix::I8))
+                                        }
+                                        "i16" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {i16}, IntSuffix::I16))
+                                        }
+                                        "i32" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {i32}, IntSuffix::I32))
+                                        }
+                                        "i64" => {
+                                            self_attrs.tag_ty =
+                                                Some((parse_quote! {i64}, IntSuffix::I64))
+                                        }
+                                        "isize" => {
+                                            errors.push(quote_spanned!{span=>
+                                                compile_error!("Bin(De)Serialize requires enums to have repr(iN) or repr(uN), not repr(isize)");
+                                            });
+                                        }
+                                        _ => continue, // ignore, this isn't our attr to complain about
+                                    }
+                                }
+                                _ => continue, // ignore, this isn't our attr to complain about
+                            },
+                            _ => continue, // ignore, this isn't our attr to complain about
+                        }
+                    }
+                } else if l.ident == "binary" {
                     for elem in &l.nested {
                         match elem {
                             NestedMeta::Meta(m) => match &m {
@@ -118,58 +177,6 @@ fn parse_attrs(
                                     "len" => match parse_size_attr_arg(nv) {
                                         Ok(v) => attrs.push(v),
                                         Err(v) => errors.push(v),
-                                    },
-                                    "tag_len" => match &nv.lit {
-                                        Lit::Int(i) => {
-                                            let ty = match i.value() {
-                                                1 => IntSuffix::U8,
-                                                2 => IntSuffix::U16,
-                                                4 => IntSuffix::U32,
-                                                8 => IntSuffix::U64,
-                                                _ => {
-                                                    let span = nv.lit.span();
-                                                    errors.push(quote_spanned! {span=>
-                                                        compile_error!("illegal attribute argument")
-                                                    });
-                                                    continue;
-                                                }
-                                            };
-                                            if context != Context::EnumHeader {
-                                                let span = nv.span();
-                                                errors.push(quote_spanned! {span=>
-                                                    compile_error!("illegal attribute target");
-                                                });
-                                            } else {
-                                                self_attrs.tag_ty = Some(ty);
-                                            }
-                                        }
-                                        _ => {
-                                            let span = nv.lit.span();
-                                            errors.push(quote_spanned! {span=>
-                                                compile_error!("illegal attribute argument");
-                                            })
-                                        }
-                                    },
-                                    "tag" => match &nv.lit {
-                                        Lit::Int(i) => {
-                                            if context != Context::EnumVariant {
-                                                let span = nv.span();
-                                                errors.push(quote_spanned! {span=>
-                                                    compile_error!("illegal attribute target");
-                                                });
-                                            } else {
-                                                let span = nv.lit.span();
-                                                attrs.push(quote_spanned! {span=>
-                                                    attrs.tag = #i;
-                                                })
-                                            }
-                                        }
-                                        _ => {
-                                            let span = nv.lit.span();
-                                            errors.push(quote_spanned! {span=>
-                                                compile_error!("illegal attribute argument");
-                                            })
-                                        }
                                     },
                                     _ => {
                                         let span = m.span();
@@ -346,7 +353,45 @@ fn encode_type(
                 );
             }
 
+            let tag_ty = self_attrs.tag_ty.clone().unwrap();
+            let mut tag = 0u64;
+            let tag_byteorder = if self_attrs.tag_le.unwrap_or(false) {
+                quote! { attrs.endian = ::binary::attr::Endian::Little; }
+            } else {
+                quote! { attrs.endian = ::binary::attr::Endian::Big; }
+            };
+
             for v in e.variants {
+                if let Some((_, expr)) = &v.discriminant {
+                    // explicit discriminant
+                    if let Expr::Lit(lit) = &expr {
+                        if let Lit::Int(i) = &lit.lit {
+                            tag = i.value();
+                        } else {
+                            let span = expr.span();
+                            variants.push(quote_spanned! {span=>
+                            compile_error!("derive(Bin(De)serialize expected a literal integer here");
+                        });
+                        }
+                    } else {
+                        let span = expr.span();
+                        variants.push(quote_spanned! {span=>
+                            compile_error!("derive(Bin(De)serialize expected a literal here");
+                        });
+                    }
+                }
+                let header = {
+                    let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
+                    quote! {
+                        ::binary::BinSerialize::encode_to(&#tag_lit, buf, {
+                            let mut attrs = ::binary::attr::Attrs::zero();
+                            #tag_byteorder
+                            attrs
+                        })?;
+                    }
+                };
+                tag += 1;
+
                 let (mut variant_attrs, variant_self_attrs, attr_errors) =
                     parse_attrs(v.attrs, Context::EnumVariant);
                 let struct_attrs = {
@@ -354,35 +399,6 @@ fn encode_type(
                     attrs.extend_from_slice(struct_attrs);
                     attrs.append(&mut variant_attrs);
                     attrs
-                };
-
-                let header = {
-                    if let Some(v) = variant_self_attrs.tag {
-                        self_attrs.tag = Some(v)
-                    } else if self_attrs.tag.is_none() {
-                        self_attrs.tag = Some(0);
-                    } else {
-                        *self_attrs.tag.iter_mut().next().unwrap() += 1;
-                    }
-
-                    let lit = LitInt::new(
-                        self_attrs.tag.unwrap(),
-                        self_attrs.tag_ty.clone().unwrap(),
-                        ident.span(),
-                    );
-
-                    let v = if self_attrs.tag_le.unwrap_or(false) {
-                        quote! { attrs.endian = ::binary::attr::Endian::Little; }
-                    } else {
-                        quote! { attrs.endian = ::binary::attr::Endian::Big; }
-                    };
-                    quote! {
-                        ::binary::BinSerialize::encode_to(&#lit, buf, {
-                            let mut attrs = ::binary::attr::Attrs::zero();
-                            #v
-                            attrs
-                        })?;
-                    }
                 };
 
                 let name = v.ident;
@@ -463,13 +479,7 @@ fn decode_type(
                     let variant = 0;
                 }
             } else {
-                let dec_ty: Type = match self_attrs.tag_ty.clone().unwrap() {
-                    IntSuffix::U8 => parse_quote! {u8},
-                    IntSuffix::U16 => parse_quote! {u16},
-                    IntSuffix::U32 => parse_quote! {u32},
-                    IntSuffix::U64 => parse_quote! {u64},
-                    _ => unreachable!(),
-                };
+                let tag_ty = self_attrs.tag_ty.clone().unwrap().0;
 
                 let v = if self_attrs.tag_le.unwrap_or(false) {
                     quote! { attrs.endian = ::binary::attr::Endian::Little; }
@@ -477,7 +487,7 @@ fn decode_type(
                     quote! { attrs.endian = ::binary::attr::Endian::Big; }
                 };
                 quote! {
-                    let variant = <#dec_ty as ::binary::BinDeserialize>::decode_from(buf, {
+                    let variant = <#tag_ty as ::binary::BinDeserialize>::decode_from(buf, {
                         let mut attrs = ::binary::attr::Attrs::zero();
                         #v
                         attrs
@@ -485,7 +495,30 @@ fn decode_type(
                 }
             };
 
+            let tag_ty = self_attrs.tag_ty.clone().unwrap();
+            let mut tag = 0u64;
+
             for v in e.variants {
+                if let Some((_, expr)) = &v.discriminant {
+                    // explicit discriminant
+                    if let Expr::Lit(lit) = expr {
+                        if let Lit::Int(i) = &lit.lit {
+                            tag = i.value();
+                        } else {
+                            let span = expr.span();
+                            variants.push(quote_spanned! {span=>
+                            compile_error!("derive(Bin(De)serialize expected a literal integer here");
+                        });
+                        }
+                    } else {
+                        let span = expr.span();
+                        variants.push(quote_spanned! {span=>
+                            compile_error!("derive(Bin(De)serialize expected a literal here");
+                        });
+                    }
+                }
+                let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
+                tag += 1;
                 let (mut variant_attrs, variant_self_attrs, attr_errors) =
                     parse_attrs(v.attrs, Context::EnumVariant);
                 let struct_attrs = {
@@ -494,19 +527,10 @@ fn decode_type(
                     attrs.append(&mut variant_attrs);
                     attrs
                 };
-                if let Some(tag) = variant_self_attrs.tag {
-                    self_attrs.tag = Some(tag);
-                } else if self_attrs.tag.is_none() {
-                    self_attrs.tag = Some(0);
-                } else {
-                    *self_attrs.tag.iter_mut().next().unwrap() += 1;
-                }
                 let name = v.ident;
                 let (newgen, fields) =
                     decode_fields(generics, v.fields, Context::EnumField, &struct_attrs);
                 generics = newgen;
-                let tag = self_attrs.tag.unwrap();
-                let tag_lit = LitInt::new(tag, self_attrs.tag_ty.clone().unwrap(), name.span());
                 variants.push(quote! {
                     #tag_lit => {
                         #ident::#name#fields

@@ -80,22 +80,22 @@ fn test_struct() {
 #[test]
 fn test_enum_plain() {
     #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
-    #[binary(tag_len = 1)]
+    #[repr(u8)]
     enum Plain {
         A,
-        B,
+        B = 42,
         C,
     }
 
     roundtrip!(Plain::A, vec![0]);
-    roundtrip!(Plain::B, vec![1]);
-    roundtrip!(Plain::C, vec![2]);
+    roundtrip!(Plain::B, vec![42]);
+    roundtrip!(Plain::C, vec![43]);
 }
 
 #[test]
 fn test_enum_fields() {
     #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
-    #[binary(tag_len = 1)]
+    #[repr(u8)]
     enum Fields {
         A,
         B(u8, String),
