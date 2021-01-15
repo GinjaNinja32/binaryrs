@@ -2,12 +2,12 @@ use syn::export::TokenStream2;
 use syn::spanned::Spanned;
 use syn::{Attribute, Expr, IntSuffix, Lit, Meta, MetaNameValue, NestedMeta, Variant};
 
-use crate::{Context, SelfAttrs};
+use crate::context::{Environment, Level};
+use crate::SelfAttrs;
 
 pub(crate) fn parse_attrs(
-    input: Vec<Attribute>,
-    context: Context,
-    parent_attrs: &TokenStream2,
+    input: &[Attribute],
+    context: (Environment, Level),
 ) -> (TokenStream2, SelfAttrs, TokenStream2) {
     let mut attrs = vec![];
     let mut self_attrs = SelfAttrs {
@@ -36,7 +36,7 @@ pub(crate) fn parse_attrs(
             }
             Meta::List(l) => {
                 if l.ident == "repr" {
-                    if context != Context::EnumHeader {
+                    if context != (Environment::Enum, Level::Top) {
                         continue; // ignore, this isn't our attr to complain about
                     }
                     for elem in &l.nested {
@@ -117,7 +117,7 @@ pub(crate) fn parse_attrs(
                                             attrs.len_endian = ::binary::attr::Endian::Big;
                                         }),
                                         "tag_little" | "tag_big" => {
-                                            if context != Context::EnumHeader {
+                                            if context != (Environment::Enum, Level::Top) {
                                                 errors.push(quote_spanned! {span=>
                                                     compile_error!("illegal attribute target");
                                                 });
@@ -178,7 +178,6 @@ pub(crate) fn parse_attrs(
 
     (
         quote! {
-            #parent_attrs
             #(#attrs)*
         },
         self_attrs,

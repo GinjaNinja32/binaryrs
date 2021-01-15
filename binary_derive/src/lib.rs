@@ -10,6 +10,8 @@ use syn::{
     Data, DeriveInput, Fields, Generics, Ident, Index, LitInt, Member, Path, Type, WherePredicate,
 };
 
+mod context;
+use context::{Context, Environment, Level};
 mod helpers;
 
 struct SelfAttrs {
@@ -17,40 +19,12 @@ struct SelfAttrs {
     tag_le: Option<bool>,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
-enum Context {
-    StructHeader,
-    StructField,
-    EnumHeader,
-    EnumVariant,
-    EnumField,
-    UnionHeader,
-    // UnionField,
-}
-
-impl Context {
-    fn from_data(data: &Data) -> Self {
-        match data {
-            Data::Struct(_) => Self::StructHeader,
-            Data::Enum(_) => Self::EnumHeader,
-            Data::Union(_) => Self::UnionHeader,
-        }
-    }
-}
-
 #[proc_macro_derive(BinSerialize, attributes(binary))]
 pub fn derive_binserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let (attrs, mut self_attrs, attr_errors) =
-        helpers::parse_attrs(input.attrs, Context::from_data(&input.data), &quote! {});
+    let (context, attr_errors) = Context::from_input(&input);
     let ident = &input.ident;
-    let (generics, fields) = encode_type(
-        input.generics,
-        input.data,
-        &input.ident,
-        &mut self_attrs,
-        attrs,
-    );
+    let (generics, fields) = encode_type(context, input.generics, input.data, &input.ident);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let s = quote! {
@@ -69,16 +43,9 @@ pub fn derive_binserialize(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(BinDeserialize, attributes(binary))]
 pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let (attrs, mut self_attrs, attr_errors) =
-        helpers::parse_attrs(input.attrs, Context::from_data(&input.data), &quote! {});
+    let (context, attr_errors) = Context::from_input(&input);
     let ident = &input.ident;
-    let (generics, fields) = decode_type(
-        input.generics,
-        input.data,
-        &input.ident,
-        &mut self_attrs,
-        attrs,
-    );
+    let (generics, fields) = decode_type(context, input.generics, input.data, &input.ident);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let s = quote! {
@@ -112,16 +79,14 @@ fn make_generic_bound(ty: Type, bound: Path) -> WherePredicate {
 }
 
 fn encode_type(
+    context: Context,
     mut generics: Generics,
     data: Data,
     ident: &Ident,
-    self_attrs: &mut SelfAttrs,
-    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields) =
-                encode_fields(generics, s.fields, Context::StructField, struct_attrs);
+            let (generics, fields) = encode_fields(context, generics, s.fields);
             (
                 generics,
                 quote! {
@@ -132,7 +97,7 @@ fn encode_type(
         Data::Enum(e) => {
             let mut variants: Vec<TokenStream2> = vec![];
 
-            if self_attrs.tag_ty.is_none() {
+            if context.self_attrs.tag_ty.is_none() {
                 let span = ident.span();
                 return (
                     generics,
@@ -142,7 +107,7 @@ fn encode_type(
                 );
             }
 
-            let tag_ty = self_attrs.tag_ty.clone().unwrap();
+            let tag_ty = context.self_attrs.tag_ty.clone().unwrap();
             let mut tag = 0u64;
 
             for v in e.variants {
@@ -156,21 +121,20 @@ fn encode_type(
                 };
                 let header = {
                     let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
-                    let attrs = helpers::build_tag_attrs(self_attrs.tag_le);
+                    let attrs = helpers::build_tag_attrs(context.self_attrs.tag_le);
                     quote! {
                         ::binary::BinSerialize::encode_to(&#tag_lit, buf, #attrs)?;
                     }
                 };
                 tag += 1;
 
-                let (variant_attrs, _variant_self_attrs, attr_errors) =
-                    helpers::parse_attrs(v.attrs, Context::EnumVariant, &struct_attrs);
+                let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
 
                 let name = v.ident;
                 let fields = pattern_fields(&v.fields);
-                let (newgen, encodes) =
-                    encode_fields(generics, v.fields, Context::EnumField, variant_attrs);
+                let (newgen, encodes) = encode_fields(context, generics, v.fields);
                 generics = newgen;
+
                 variants.push(quote! {
                     #ident::#name#fields => {
                         #header
@@ -217,16 +181,14 @@ fn pattern_fields(f: &Fields) -> TokenStream2 {
 }
 
 fn decode_type(
+    context: Context,
     mut generics: Generics,
     data: Data,
     ident: &Ident,
-    self_attrs: &mut SelfAttrs,
-    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields) =
-                decode_fields(generics, s.fields, Context::StructField, struct_attrs);
+            let (generics, fields) = decode_fields(context, generics, s.fields);
             (
                 generics,
                 quote! {
@@ -237,21 +199,21 @@ fn decode_type(
         Data::Enum(e) => {
             let mut variants: Vec<TokenStream2> = vec![];
 
-            let header = if self_attrs.tag_ty.is_none() {
+            let header = if context.self_attrs.tag_ty.is_none() {
                 let span = ident.span();
                 quote_spanned! {span=>
                     compile_error!("no tag type defined; enums deriving BinSerialize or BinDeserialize must have repr(uN) or repr(iN)");
                     let variant = 0;
                 }
             } else {
-                let tag_ty = self_attrs.tag_ty.clone().unwrap().0;
-                let attrs = helpers::build_tag_attrs(self_attrs.tag_le);
+                let tag_ty = context.self_attrs.tag_ty.clone().unwrap().0;
+                let attrs = helpers::build_tag_attrs(context.self_attrs.tag_le);
                 quote! {
                     let variant = <#tag_ty as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
                 }
             };
 
-            let tag_ty = self_attrs.tag_ty.clone().unwrap();
+            let tag_ty = context.self_attrs.tag_ty.clone().unwrap();
             let mut tag = 0u64;
 
             for v in e.variants {
@@ -265,12 +227,11 @@ fn decode_type(
                 };
                 let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
                 tag += 1;
-                let (variant_attrs, _variant_self_attrs, attr_errors) =
-                    helpers::parse_attrs(v.attrs, Context::EnumVariant, &struct_attrs);
+                let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
                 let name = v.ident;
-                let (newgen, fields) =
-                    decode_fields(generics, v.fields, Context::EnumField, variant_attrs);
+                let (newgen, fields) = decode_fields(context, generics, v.fields);
                 generics = newgen;
+
                 variants.push(quote! {
                     #tag_lit => {
                         #ident::#name#fields
@@ -292,10 +253,9 @@ fn decode_type(
 }
 
 fn encode_fields(
+    context: Context,
     mut generics: Generics,
     fields: Fields,
-    ctx: Context,
-    struct_attrs: TokenStream2,
 ) -> (Generics, Vec<TokenStream2>) {
     let mut encodes = vec![];
     let fields = match fields {
@@ -305,7 +265,7 @@ fn encode_fields(
     };
     for (i, f) in fields.into_iter().enumerate() {
         let span = f.span();
-        let (attrs, _field_attrs, attr_errors) = helpers::parse_attrs(f.attrs, ctx, &struct_attrs);
+        let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
 
         generics
             .make_where_clause()
@@ -315,7 +275,7 @@ fn encode_fields(
                 parse_quote! {::binary::BinSerialize},
             ));
 
-        let ident: TokenStream2 = if ctx == Context::EnumField {
+        let ident: TokenStream2 = if context.env == Environment::Enum {
             let (name, span) = match f.ident {
                 Some(n) => (format!("self_{}", n), n.span()),
                 None => (format!("self_{}", i), span),
@@ -333,12 +293,9 @@ fn encode_fields(
             quote! { self.#ident }
         };
 
+        let attrs = context.build_attrs();
         encodes.push(quote! {
-            ::binary::BinSerialize::encode_to(&#ident, buf, {
-                let mut attrs = attrs.clone();
-                #attrs
-                attrs
-            })?;
+            ::binary::BinSerialize::encode_to(&#ident, buf, #attrs)?;
             #attr_errors
         });
     }
@@ -346,10 +303,9 @@ fn encode_fields(
 }
 
 fn decode_fields(
+    context: Context,
     mut generics: Generics,
     fields: Fields,
-    ctx: Context,
-    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     let mut decodes: Vec<TokenStream2> = vec![];
     let fields_list = match &fields {
@@ -359,8 +315,7 @@ fn decode_fields(
     };
     for f in fields_list {
         let ty = f.ty.clone();
-        let (attrs, _self_attrs, attr_errors) =
-            helpers::parse_attrs(f.attrs.clone(), ctx, &struct_attrs);
+        let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
 
         generics
             .make_where_clause()
@@ -377,13 +332,10 @@ fn decode_fields(
             None
         };
 
+        let attrs = context.build_attrs();
         decodes.push(quote! {
-            #ident#colon <#ty as ::binary::BinDeserialize>::decode_from(buf, {
-                let mut attrs = attrs.clone();
-                #attrs
-                attrs
-            })?,
-            #(#attr_errors)*
+            #ident#colon <#ty as ::binary::BinDeserialize>::decode_from(buf, #attrs)?,
+            #attr_errors
         });
     }
     match fields {
