@@ -22,6 +22,8 @@ struct SelfAttrs {
 #[proc_macro_derive(BinSerialize, attributes(binary))]
 pub fn derive_binserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    #[cfg(feature = "debug_prints")]
+    println!("derive(BinSerialize) for {}", input.ident);
     let (context, attr_errors) = Context::from_input(&input);
     let ident = &input.ident;
     let (generics, fields) = encode_type(context, input.generics, input.data, &input.ident);
@@ -37,12 +39,16 @@ pub fn derive_binserialize(input: TokenStream) -> TokenStream {
         }
         #attr_errors
     };
+    #[cfg(feature = "debug_prints")]
+    println!("=====\n{}\n=====", s);
     s.into()
 }
 
 #[proc_macro_derive(BinDeserialize, attributes(binary))]
 pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    #[cfg(feature = "debug_prints")]
+    println!("derive(BinDeserialize) for {}", input.ident);
     let (context, attr_errors) = Context::from_input(&input);
     let ident = &input.ident;
     let (generics, fields) = decode_type(context, input.generics, input.data, &input.ident);
@@ -59,6 +65,8 @@ pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
         }
         #attr_errors
     };
+    #[cfg(feature = "debug_prints")]
+    println!("=====\n{}\n=====", s);
     s.into()
 }
 
