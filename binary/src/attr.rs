@@ -38,6 +38,10 @@ pub enum Len {
     U16,
     U32,
     U64,
+    I8,
+    I16,
+    I32,
+    I64,
 }
 
 impl Len {
@@ -48,22 +52,30 @@ impl Len {
                 Len::U16 => buf.put_u16(v.try_into()?),
                 Len::U32 => buf.put_u32(v.try_into()?),
                 Len::U64 => buf.put_u64(v),
+                Len::I8 => buf.put_i8(v.try_into()?),
+                Len::I16 => buf.put_i16(v.try_into()?),
+                Len::I32 => buf.put_i32(v.try_into()?),
+                Len::I64 => buf.put_i64(v.try_into()?),
             },
             Endian::Little => match self {
                 Len::U8 => buf.put_u8(v.try_into()?),
                 Len::U16 => buf.put_u16_le(v.try_into()?),
                 Len::U32 => buf.put_u32_le(v.try_into()?),
                 Len::U64 => buf.put_u64_le(v),
+                Len::I8 => buf.put_i8(v.try_into()?),
+                Len::I16 => buf.put_i16_le(v.try_into()?),
+                Len::I32 => buf.put_i32_le(v.try_into()?),
+                Len::I64 => buf.put_i64_le(v.try_into()?),
             },
         }
         Ok(())
     }
     pub fn decode(&self, buf: &mut dyn crate::Buf, endian: Endian) -> Result<u64> {
         match self {
-            Len::U8 => buf.req(1)?,
-            Len::U16 => buf.req(2)?,
-            Len::U32 => buf.req(4)?,
-            Len::U64 => buf.req(8)?,
+            Len::U8 | Len::I8 => buf.req(1)?,
+            Len::U16 | Len::I16 => buf.req(2)?,
+            Len::U32 | Len::I32 => buf.req(4)?,
+            Len::U64 | Len::I64 => buf.req(8)?,
         }
         let v = match endian {
             Endian::Big => match self {
@@ -71,12 +83,20 @@ impl Len {
                 Len::U16 => buf.get_u16() as u64,
                 Len::U32 => buf.get_u32() as u64,
                 Len::U64 => buf.get_u64(),
+                Len::I8 => buf.get_i8().try_into()?,
+                Len::I16 => buf.get_i16().try_into()?,
+                Len::I32 => buf.get_i32().try_into()?,
+                Len::I64 => buf.get_i64().try_into()?,
             },
             Endian::Little => match self {
                 Len::U8 => buf.get_u8() as u64,
                 Len::U16 => buf.get_u16_le() as u64,
                 Len::U32 => buf.get_u32_le() as u64,
                 Len::U64 => buf.get_u64_le(),
+                Len::I8 => buf.get_i8().try_into()?,
+                Len::I16 => buf.get_i16_le().try_into()?,
+                Len::I32 => buf.get_i32_le().try_into()?,
+                Len::I64 => buf.get_i64_le().try_into()?,
             },
         };
         Ok(v)
