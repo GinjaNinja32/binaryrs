@@ -137,7 +137,7 @@ fn encode_type(
                 return (
                     generics,
                     quote_spanned! {span=>
-                        compile_error!("no span type defined; enums deriving BinSerialize or BinDeserialize must have repr(uN) or repr(iN)");
+                        compile_error!("no tag type defined; enums deriving BinSerialize or BinDeserialize must have repr(uN) or repr(iN)");
                     },
                 );
             }
@@ -240,7 +240,7 @@ fn decode_type(
             let header = if self_attrs.tag_ty.is_none() {
                 let span = ident.span();
                 quote_spanned! {span=>
-                    compile_error!("no span type defined; enums deriving BinSerialize or BinDeserialize must have repr(uN) or repr(iN)");
+                    compile_error!("no tag type defined; enums deriving BinSerialize or BinDeserialize must have repr(uN) or repr(iN)");
                     let variant = 0;
                 }
             } else {
