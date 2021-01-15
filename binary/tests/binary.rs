@@ -67,6 +67,50 @@ fn test_struct() {
         },
         vec![16, 39, 116, 101, 115, 116, 0, 4, 0, 1, 2, 3, 4, 0, 0, 0, 1, 66, 42]
     );
+
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    struct Y(u16, String, #[binary(len = 2)] Vec<u8>);
+
+    roundtrip!(
+        Y(10000, "test".to_string(), vec![1, 2, 3, 4]),
+        vec![16, 39, 116, 101, 115, 116, 0, 4, 0, 1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn test_enum_plain() {
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    #[binary(tag_len = 1)]
+    enum Plain {
+        A,
+        B,
+        C,
+    }
+
+    roundtrip!(Plain::A, vec![0]);
+    roundtrip!(Plain::B, vec![1]);
+    roundtrip!(Plain::C, vec![2]);
+}
+
+#[test]
+fn test_enum_fields() {
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    #[binary(tag_len = 1)]
+    enum Fields {
+        A,
+        B(u8, String),
+        C { x: u32, y: u32 },
+    }
+
+    roundtrip!(Fields::A, vec![0]);
+    roundtrip!(
+        Fields::B(42, "test".to_string()),
+        vec![1, 42, 116, 101, 115, 116, 0]
+    );
+    roundtrip!(
+        Fields::C { x: 42, y: 100 },
+        vec![2, 42, 0, 0, 0, 100, 0, 0, 0]
+    );
 }
 
 #[derive(BinSerialize, BinDeserialize, PartialEq, Eq, Debug)]

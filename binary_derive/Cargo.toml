@@ -11,6 +11,5 @@ proc-macro = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# "binary" = { path = "../binary" }
 "syn" = { version = "0.15", features = ["extra-traits"] }
 "quote" = "0.6"

@@ -1,5 +1,6 @@
 use crate::attr::{Attrs, Endian};
 use crate::{BinDeserialize, BinError, BinSerialize, Buf, BufMut, Result};
+use std::convert::TryInto;
 
 impl BinSerialize for bool {
     fn encode_to(&self, buf: &mut dyn BufMut, _attrs: Attrs) -> Result<()> {
@@ -233,7 +234,7 @@ where
     T: BinSerialize,
 {
     fn encode_to(&self, buf: &mut dyn BufMut, attrs: Attrs) -> Result<()> {
-        attrs.encode_length(buf, self.len())?;
+        attrs.encode_length(buf, self.len() as u64)?;
         for elem in self {
             elem.encode_to(buf, attrs)?;
         }
@@ -248,6 +249,7 @@ where
         let len = attrs.decode_length(buf)?;
         let mut v = vec![];
         if let Some(len) = len {
+            let len: usize = len.try_into()?; // usize might be u32, so we need to check
             for _ in 0..len {
                 v.push(T::decode_from(buf, attrs)?);
             }
@@ -262,5 +264,30 @@ where
             }
         }
         Ok(v)
+    }
+}
+
+impl<T, const N: usize> BinDeserialize for [T; N]
+where
+    T: BinDeserialize,
+{
+    fn decode_from(buf: &mut dyn Buf, attrs: Attrs) -> Result<Self> {
+        let mut v = Vec::with_capacity(N);
+        for _ in 0..N {
+            v.push(T::decode_from(buf, attrs)?);
+        }
+        Ok(v.try_into().ok().unwrap())
+    }
+}
+
+impl<T, const N: usize> BinSerialize for [T; N]
+where
+    T: BinSerialize,
+{
+    fn encode_to(&self, buf: &mut dyn BufMut, attrs: Attrs) -> Result<()> {
+        for item in self {
+            item.encode_to(buf, attrs)?;
+        }
+        Ok(())
     }
 }

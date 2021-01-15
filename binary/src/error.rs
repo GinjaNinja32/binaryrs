@@ -9,6 +9,9 @@ pub enum BinError {
     // The parameter indicates how much data is required in order to make further progress (i.e. to finish decoding
     // the field that required more data). It may be zero to denote that the amount of data required is unknown.
     InsufficientData(usize),
+    // A variant tag was parsed that did not correspond to a known enum variant.
+    // The parameter indicates the invalid variant tag.
+    VariantNotMatched(u64),
     IntTooLarge(TryFromIntError),
     InvalidUTF8(FromUtf8Error),
 }

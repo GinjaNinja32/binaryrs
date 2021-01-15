@@ -8,5 +8,4 @@ edition = "2018"
 
 [dependencies]
 bytes = "1"
-serde = { version = "1", features = ["derive"] }
 binary_derive = { path = "../binary_derive" }
