@@ -139,8 +139,8 @@ fn encode_type(
                     #ident::#name#fields => {
                         #header
                         #(#encodes)*
+                        #attr_errors
                     }
-                    #attr_errors
                 });
             }
             let encode = quote! {
@@ -188,10 +188,11 @@ fn decode_type(
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields) = decode_fields(context, generics, s.fields);
+            let (generics, fields, errors) = decode_fields(context, generics, s.fields);
             (
                 generics,
                 quote! {
+                    #errors
                     Self #(#fields)*
                 },
             )
@@ -229,14 +230,15 @@ fn decode_type(
                 tag += 1;
                 let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
                 let name = v.ident;
-                let (newgen, fields) = decode_fields(context, generics, v.fields);
+                let (newgen, fields, errors) = decode_fields(context, generics, v.fields);
                 generics = newgen;
 
                 variants.push(quote! {
                     #tag_lit => {
+                        #attr_errors
+                        #errors
                         #ident::#name#fields
                     }
-                    #attr_errors
                 });
             }
             let decode = quote! {
@@ -306,12 +308,13 @@ fn decode_fields(
     context: Context,
     mut generics: Generics,
     fields: Fields,
-) -> (Generics, TokenStream2) {
+) -> (Generics, TokenStream2, TokenStream2) {
     let mut decodes: Vec<TokenStream2> = vec![];
+    let mut errors: Vec<TokenStream2> = vec![];
     let fields_list = match &fields {
         Fields::Named(n) => &n.named,
         Fields::Unnamed(u) => &u.unnamed,
-        Fields::Unit => return (generics, quote! {}),
+        Fields::Unit => return (generics, quote! {}, quote! {}),
     };
     for f in fields_list {
         let ty = f.ty.clone();
@@ -335,12 +338,13 @@ fn decode_fields(
         let attrs = context.build_attrs();
         decodes.push(quote! {
             #ident#colon <#ty as ::binary::BinDeserialize>::decode_from(buf, #attrs)?,
-            #attr_errors
         });
+        errors.push(attr_errors);
     }
+    let errors = quote! { #(#errors)* };
     match fields {
-        Fields::Named(_) => (generics, quote! { { #(#decodes)* } }),
-        Fields::Unnamed(_) => (generics, quote! { ( #(#decodes)* ) }),
+        Fields::Named(_) => (generics, quote! { { #(#decodes)* } }, errors),
+        Fields::Unnamed(_) => (generics, quote! { ( #(#decodes)* ) }, errors),
         _ => unreachable!(),
     }
 }

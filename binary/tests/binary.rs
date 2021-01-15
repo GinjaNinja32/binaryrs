@@ -50,9 +50,9 @@ fn test_struct() {
     struct X {
         a: u16,
         b: String,
-        #[binary(len = 2)]
+        #[binary(len(u16))]
         c: Vec<u8>,
-        #[binary(len = 4, len_big)]
+        #[binary(len(u32, big))]
         d: Vec<u8>,
         e: u8,
     }
@@ -69,7 +69,7 @@ fn test_struct() {
     );
 
     #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
-    struct Y(u16, String, #[binary(len = 2)] Vec<u8>);
+    struct Y(u16, String, #[binary(len(u16))] Vec<u8>);
 
     roundtrip!(
         Y(10000, "test".to_string(), vec![1, 2, 3, 4]),
@@ -115,7 +115,7 @@ fn test_enum_fields() {
 
 #[derive(BinSerialize, BinDeserialize, PartialEq, Eq, Debug)]
 struct TestStruct {
-    #[binary(len = 1)]
+    #[binary(len(u8))]
     x: Vec<u8>,
 }
 

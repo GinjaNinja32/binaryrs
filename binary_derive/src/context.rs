@@ -61,7 +61,7 @@ impl Context {
     pub(crate) fn recurse_into(&self, level: Level, attrs: &[Attribute]) -> (Self, TokenStream2) {
         let old_attrs = &self.attrs;
 
-        let (attrs, mut self_attrs, attr_errors) =
+        let (attrs, self_attrs, attr_errors) =
             crate::helpers::parse_attrs(attrs, (self.env, level));
 
         (
