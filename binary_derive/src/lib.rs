@@ -42,14 +42,14 @@ impl Context {
 pub fn derive_binserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let (attrs, mut self_attrs, attr_errors) =
-        helpers::parse_attrs(input.attrs, Context::from_data(&input.data));
+        helpers::parse_attrs(input.attrs, Context::from_data(&input.data), &quote! {});
     let ident = &input.ident;
     let (generics, fields) = encode_type(
         input.generics,
         input.data,
         &input.ident,
         &mut self_attrs,
-        &attrs,
+        attrs,
     );
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -61,7 +61,7 @@ pub fn derive_binserialize(input: TokenStream) -> TokenStream {
                 Ok(())
             }
         }
-        #(#attr_errors)*
+        #attr_errors
     };
     s.into()
 }
@@ -70,14 +70,14 @@ pub fn derive_binserialize(input: TokenStream) -> TokenStream {
 pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let (attrs, mut self_attrs, attr_errors) =
-        helpers::parse_attrs(input.attrs, Context::from_data(&input.data));
+        helpers::parse_attrs(input.attrs, Context::from_data(&input.data), &quote! {});
     let ident = &input.ident;
     let (generics, fields) = decode_type(
         input.generics,
         input.data,
         &input.ident,
         &mut self_attrs,
-        &attrs,
+        attrs,
     );
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -90,7 +90,7 @@ pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
                 })
             }
         }
-        #(#attr_errors)*
+        #attr_errors
     };
     s.into()
 }
@@ -116,7 +116,7 @@ fn encode_type(
     data: Data,
     ident: &Ident,
     self_attrs: &mut SelfAttrs,
-    struct_attrs: &[TokenStream2],
+    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
@@ -163,26 +163,20 @@ fn encode_type(
                 };
                 tag += 1;
 
-                let (mut variant_attrs, _variant_self_attrs, attr_errors) =
-                    helpers::parse_attrs(v.attrs, Context::EnumVariant);
-                let struct_attrs = {
-                    let mut attrs = vec![];
-                    attrs.extend_from_slice(struct_attrs);
-                    attrs.append(&mut variant_attrs);
-                    attrs
-                };
+                let (variant_attrs, _variant_self_attrs, attr_errors) =
+                    helpers::parse_attrs(v.attrs, Context::EnumVariant, &struct_attrs);
 
                 let name = v.ident;
                 let fields = pattern_fields(&v.fields);
                 let (newgen, encodes) =
-                    encode_fields(generics, v.fields, Context::EnumField, &struct_attrs);
+                    encode_fields(generics, v.fields, Context::EnumField, variant_attrs);
                 generics = newgen;
                 variants.push(quote! {
                     #ident::#name#fields => {
                         #header
                         #(#encodes)*
                     }
-                    #(#attr_errors)*
+                    #attr_errors
                 });
             }
             let encode = quote! {
@@ -227,7 +221,7 @@ fn decode_type(
     data: Data,
     ident: &Ident,
     self_attrs: &mut SelfAttrs,
-    struct_attrs: &[TokenStream2],
+    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
@@ -271,23 +265,17 @@ fn decode_type(
                 };
                 let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
                 tag += 1;
-                let (mut variant_attrs, _variant_self_attrs, attr_errors) =
-                    helpers::parse_attrs(v.attrs, Context::EnumVariant);
-                let struct_attrs = {
-                    let mut attrs = vec![];
-                    attrs.extend_from_slice(struct_attrs);
-                    attrs.append(&mut variant_attrs);
-                    attrs
-                };
+                let (variant_attrs, _variant_self_attrs, attr_errors) =
+                    helpers::parse_attrs(v.attrs, Context::EnumVariant, &struct_attrs);
                 let name = v.ident;
                 let (newgen, fields) =
-                    decode_fields(generics, v.fields, Context::EnumField, &struct_attrs);
+                    decode_fields(generics, v.fields, Context::EnumField, variant_attrs);
                 generics = newgen;
                 variants.push(quote! {
                     #tag_lit => {
                         #ident::#name#fields
                     }
-                    #(#attr_errors)*
+                    #attr_errors
                 });
             }
             let decode = quote! {
@@ -307,7 +295,7 @@ fn encode_fields(
     mut generics: Generics,
     fields: Fields,
     ctx: Context,
-    struct_attrs: &[TokenStream2],
+    struct_attrs: TokenStream2,
 ) -> (Generics, Vec<TokenStream2>) {
     let mut encodes = vec![];
     let fields = match fields {
@@ -317,7 +305,7 @@ fn encode_fields(
     };
     for (i, f) in fields.into_iter().enumerate() {
         let span = f.span();
-        let (attrs, _field_attrs, attr_errors) = helpers::parse_attrs(f.attrs, ctx);
+        let (attrs, _field_attrs, attr_errors) = helpers::parse_attrs(f.attrs, ctx, &struct_attrs);
 
         generics
             .make_where_clause()
@@ -348,11 +336,10 @@ fn encode_fields(
         encodes.push(quote! {
             ::binary::BinSerialize::encode_to(&#ident, buf, {
                 let mut attrs = attrs.clone();
-                #(#struct_attrs)*
-                #(#attrs)*
+                #attrs
                 attrs
             })?;
-            #(#attr_errors)*
+            #attr_errors
         });
     }
     (generics, encodes)
@@ -362,7 +349,7 @@ fn decode_fields(
     mut generics: Generics,
     fields: Fields,
     ctx: Context,
-    struct_attrs: &[TokenStream2],
+    struct_attrs: TokenStream2,
 ) -> (Generics, TokenStream2) {
     let mut decodes: Vec<TokenStream2> = vec![];
     let fields_list = match &fields {
@@ -372,7 +359,8 @@ fn decode_fields(
     };
     for f in fields_list {
         let ty = f.ty.clone();
-        let (attrs, _self_attrs, attr_errors) = helpers::parse_attrs(f.attrs.clone(), ctx);
+        let (attrs, _self_attrs, attr_errors) =
+            helpers::parse_attrs(f.attrs.clone(), ctx, &struct_attrs);
 
         generics
             .make_where_clause()
@@ -392,8 +380,7 @@ fn decode_fields(
         decodes.push(quote! {
             #ident#colon <#ty as ::binary::BinDeserialize>::decode_from(buf, {
                 let mut attrs = attrs.clone();
-                #(#struct_attrs)*
-                #(#attrs)*
+                #attrs
                 attrs
             })?,
             #(#attr_errors)*
