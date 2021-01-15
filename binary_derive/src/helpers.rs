@@ -5,7 +5,8 @@ use syn::{Attribute, Expr, Ident, IntSuffix, Lit, Meta, NestedMeta, Type, Varian
 use crate::context::{Environment, Level};
 use crate::SelfAttrs;
 
-enum SizeType {
+#[derive(Copy, Clone)]
+pub(crate) enum SizeType {
     U8,
     U16,
     U32,
@@ -29,23 +30,31 @@ impl SizeType {
             Self::I64 => (parse_quote! {i64}, IntSuffix::I64),
         }
     }
+    fn build_attr_form(&self) -> TokenStream2 {
+        match self {
+            SizeType::U8 => quote! {::binary::attr::Len::U8},
+            SizeType::U16 => quote! {::binary::attr::Len::U16},
+            SizeType::U32 => quote! {::binary::attr::Len::U32},
+            SizeType::U64 => quote! {::binary::attr::Len::U64},
+            SizeType::I8 => quote! {::binary::attr::Len::I8},
+            SizeType::I16 => quote! {::binary::attr::Len::I16},
+            SizeType::I32 => quote! {::binary::attr::Len::I32},
+            SizeType::I64 => quote! {::binary::attr::Len::I64},
+        }
+    }
 }
 
-trait SizeTypeExt {
+pub(crate) trait SizeTypeExt {
     fn build_attr_form(&self) -> TokenStream2;
 }
 impl SizeTypeExt for Option<SizeType> {
     fn build_attr_form(&self) -> TokenStream2 {
         match self {
             None => quote! {None},
-            Some(SizeType::U8) => quote! {Some(::binary::attr::Len::U8)},
-            Some(SizeType::U16) => quote! {Some(::binary::attr::Len::U16)},
-            Some(SizeType::U32) => quote! {Some(::binary::attr::Len::U32)},
-            Some(SizeType::U64) => quote! {Some(::binary::attr::Len::U64)},
-            Some(SizeType::I8) => quote! {Some(::binary::attr::Len::I8)},
-            Some(SizeType::I16) => quote! {Some(::binary::attr::Len::I16)},
-            Some(SizeType::I32) => quote! {Some(::binary::attr::Len::I32)},
-            Some(SizeType::I64) => quote! {Some(::binary::attr::Len::I64)},
+            Some(t) => {
+                let t = t.build_attr_form();
+                quote! {Some(#t)}
+            }
         }
     }
 }
@@ -58,6 +67,10 @@ pub(crate) fn parse_attrs(
     let mut self_attrs = SelfAttrs {
         tag_ty: None,
         tag_le: None,
+        nest: false,
+        nest_variants: false,
+        nest_ty: None,
+        nest_le: None,
     };
     let mut errors = vec![];
 
@@ -69,6 +82,7 @@ pub(crate) fn parse_attrs(
                 continue;
             }
         };
+
         match &data {
             Meta::Word(w) => {
                 if w == "binary" {
@@ -120,6 +134,15 @@ pub(crate) fn parse_attrs(
                                         "reset" => attrs.push(quote_spanned! {span=>
                                             attrs = ::binary::attr::Attrs::zero();
                                         }),
+                                        "nest" => {
+                                            if context != (Environment::Enum, Level::Top) {
+                                                errors.push(quote_spanned! {span=>
+                                                    compile_error!("illegal attribute target");
+                                                });
+                                            } else {
+                                                self_attrs.nest_variants = true;
+                                            }
+                                        }
                                         _ => {
                                             errors.push(quote_spanned! {span=>
                                                 compile_error!("unknown attribute");
@@ -170,12 +193,12 @@ pub(crate) fn parse_attrs(
                                     }
                                     "tag" => {
                                         if context != (Environment::Enum, Level::Top) {
-                                            let span = l.span();
+                                            let span = list.span();
                                             errors.push(quote_spanned! {span=>
                                                 compile_error!("illegal attribute target");
                                             });
                                         } else {
-                                            for elem in &l.nested {
+                                            for elem in &list.nested {
                                                 match elem {
                                                     NestedMeta::Meta(Meta::Word(word)) => {
                                                         let span = word.span();
@@ -205,6 +228,49 @@ pub(crate) fn parse_attrs(
                                                         errors.push(quote_spanned! {span=>
                                                         compile_error!("illegal attribute form");
                                                     });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "nest" => {
+                                        if context != (Environment::Enum, Level::Top) {
+                                            let span = list.span();
+                                            errors.push(quote_spanned! {span=>
+                                                compile_error!("illegal attribute target");
+                                            });
+                                        } else {
+                                            self_attrs.nest_variants = true;
+                                            for elem in &list.nested {
+                                                match elem {
+                                                    NestedMeta::Meta(Meta::Word(word)) => {
+                                                        let span = word.span();
+                                                        let s = word.to_string();
+                                                        match s.as_str() {
+                                                            "little" => {
+                                                                self_attrs.nest_le = Some(true)
+                                                            }
+                                                            "big" => {
+                                                                self_attrs.nest_le = Some(false)
+                                                            }
+                                                            _ => {
+                                                                match parse_size_attr_arg(word) {
+                                                                    Ok(Some(v)) => self_attrs.nest_ty = Some(v),
+                                                                    Err(None) | Ok(None) => {
+                                                                        errors.push(quote_spanned! {span=>
+                                                                            compile_error!("unknown attribute");
+                                                                        })
+                                                                    }
+                                                                    Err(Some(v)) => errors.push(v),
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        let span = elem.span();
+                                                        errors.push(quote_spanned! {span=>
+                                                            compile_error!("illegal attribute form");
+                                                        });
                                                     }
                                                 }
                                             }
@@ -303,16 +369,34 @@ pub(crate) fn find_discriminant(v: &Variant) -> Result<Option<u64>, TokenStream2
 }
 
 pub(crate) fn build_tag_attrs(tag_le: Option<bool>) -> TokenStream2 {
-    let tag_byteorder = if tag_le.unwrap_or(false) {
-        quote! { attrs.endian = ::binary::attr::Endian::Little; }
+    let byteorder = if tag_le.unwrap_or(true) {
+        quote! { ::binary::attr::Endian::Little; }
     } else {
-        quote! { attrs.endian = ::binary::attr::Endian::Big; }
+        quote! { ::binary::attr::Endian::Big; }
     };
 
     quote! {
         {
             let mut attrs = ::binary::attr::Attrs::zero();
-            #tag_byteorder
+            attrs.endian = #byteorder;
+            attrs
+        }
+    }
+}
+
+pub(crate) fn build_nest_attrs(nest_le: Option<bool>, nest_ty: SizeType) -> TokenStream2 {
+    let byteorder = if nest_le.unwrap_or(true) {
+        quote! { ::binary::attr::Endian::Little }
+    } else {
+        quote! { ::binary::attr::Endian::Big }
+    };
+    let len = nest_ty.build_attr_form();
+
+    quote! {
+        {
+            let mut attrs = ::binary::attr::Attrs::zero();
+            attrs.len = Some(#len);
+            attrs.len_endian = #byteorder;
             attrs
         }
     }

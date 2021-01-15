@@ -17,6 +17,11 @@ mod helpers;
 struct SelfAttrs {
     tag_ty: Option<(syn::Type, syn::IntSuffix)>,
     tag_le: Option<bool>,
+
+    nest_variants: bool,
+    nest: bool,
+    nest_ty: Option<helpers::SizeType>,
+    nest_le: Option<bool>,
 }
 
 #[proc_macro_derive(BinSerialize, attributes(binary))]
@@ -94,7 +99,7 @@ fn encode_type(
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields) = encode_fields(context, generics, s.fields);
+            let (generics, fields) = encode_fields(&context, generics, s.fields);
             (
                 generics,
                 quote! {
@@ -140,7 +145,26 @@ fn encode_type(
 
                 let name = v.ident;
                 let fields = pattern_fields(&v.fields);
-                let (newgen, encodes) = encode_fields(context, generics, v.fields);
+
+                let (newgen, encodes) = encode_fields(&context, generics, v.fields);
+                let mut encodes = quote! { #(#encodes)* };
+
+                if context.self_attrs.nest {
+                    let attrs = helpers::build_nest_attrs(
+                        context.self_attrs.nest_le,
+                        context.self_attrs.nest_ty.unwrap(),
+                    );
+                    encodes = quote! {
+                        let nested = {
+                            let mut v = vec![];
+                            let buf: &mut dyn ::binary::BufMut = &mut v;
+                            #encodes
+                            v
+                        };
+                        ::binary::BinSerialize::encode_to(&nested, buf, #attrs)?;
+                    }
+                }
+
                 generics = newgen;
 
                 variants.push(quote! {
@@ -196,7 +220,7 @@ fn decode_type(
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields, errors) = decode_fields(context, generics, s.fields);
+            let (generics, fields, errors) = decode_fields(&context, generics, s.fields);
             (
                 generics,
                 quote! {
@@ -238,13 +262,27 @@ fn decode_type(
                 tag += 1;
                 let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
                 let name = v.ident;
-                let (newgen, fields, errors) = decode_fields(context, generics, v.fields);
+                let (newgen, fields, errors) = decode_fields(&context, generics, v.fields);
                 generics = newgen;
+
+                let pre = if context.self_attrs.nest {
+                    let attrs = helpers::build_nest_attrs(
+                        context.self_attrs.nest_le,
+                        context.self_attrs.nest_ty.unwrap(),
+                    );
+                    Some(quote! {
+                        let v = <Vec<u8> as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
+                        let buf: &mut dyn ::binary::Buf = &mut v.as_slice();
+                    })
+                } else {
+                    None
+                };
 
                 variants.push(quote! {
                     #tag_lit => {
                         #attr_errors
                         #errors
+                        #pre
                         #ident::#name#fields
                     }
                 });
@@ -263,7 +301,7 @@ fn decode_type(
 }
 
 fn encode_fields(
-    context: Context,
+    context: &Context,
     mut generics: Generics,
     fields: Fields,
 ) -> (Generics, Vec<TokenStream2>) {
@@ -313,7 +351,7 @@ fn encode_fields(
 }
 
 fn decode_fields(
-    context: Context,
+    context: &Context,
     mut generics: Generics,
     fields: Fields,
 ) -> (Generics, TokenStream2, TokenStream2) {

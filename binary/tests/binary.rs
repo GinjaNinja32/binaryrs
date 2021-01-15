@@ -113,6 +113,28 @@ fn test_enum_fields() {
     );
 }
 
+#[test]
+fn test_enum_nested() {
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    #[repr(u8)]
+    #[binary(nest(u8))]
+    enum Nest {
+        A,
+        B(u8, String),
+        C { x: u32, y: u32 },
+    }
+
+    roundtrip!(Nest::A, vec![0, 0]);
+    roundtrip!(
+        Nest::B(42, "test".to_string()),
+        vec![1, 6, 42, 116, 101, 115, 116, 0]
+    );
+    roundtrip!(
+        Nest::C { x: 42, y: 100 },
+        vec![2, 8, 42, 0, 0, 0, 100, 0, 0, 0]
+    );
+}
+
 #[derive(BinSerialize, BinDeserialize, PartialEq, Eq, Debug)]
 struct TestStruct {
     #[binary(len(u8))]

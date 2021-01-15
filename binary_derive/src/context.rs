@@ -53,6 +53,10 @@ impl Context {
             self_attrs: SelfAttrs {
                 tag_ty: None,
                 tag_le: None,
+                nest: false,
+                nest_variants: false,
+                nest_ty: None,
+                nest_le: None,
             },
         };
 
@@ -61,8 +65,14 @@ impl Context {
     pub(crate) fn recurse_into(&self, level: Level, attrs: &[Attribute]) -> (Self, TokenStream2) {
         let old_attrs = &self.attrs;
 
-        let (attrs, self_attrs, attr_errors) =
+        let (attrs, mut self_attrs, attr_errors) =
             crate::helpers::parse_attrs(attrs, (self.env, level));
+
+        if self.self_attrs.nest_variants {
+            self_attrs.nest = true;
+            self_attrs.nest_ty = self.self_attrs.nest_ty;
+            self_attrs.nest_le = self.self_attrs.nest_le;
+        }
 
         (
             Self {
