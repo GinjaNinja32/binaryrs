@@ -25,6 +25,12 @@ pub trait Buf: bytes::Buf {
 }
 impl<T: bytes::Buf> Buf for T {}
 
+pub trait BinFlags {
+    fn zero() -> Self;
+    fn has(&self, v: u64) -> bool;
+    fn set(&mut self, v: u64);
+}
+
 // DeOption helper, for binary_derive to un-Option-ify types for decoding when using flags
 pub trait DeOption: private::Sealed {
     type Assoc;

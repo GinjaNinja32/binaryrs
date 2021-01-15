@@ -1,5 +1,5 @@
 use crate::attr::{Attrs, Endian};
-use crate::{BinDeserialize, BinError, BinSerialize, Buf, BufMut, Result};
+use crate::{BinDeserialize, BinError, BinFlags, BinSerialize, Buf, BufMut, Result};
 use std::convert::TryInto;
 
 impl BinSerialize for bool {
@@ -40,6 +40,17 @@ impl BinDeserialize for u8 {
         Ok(buf.get_u8())
     }
 }
+impl BinFlags for u8 {
+    fn zero() -> Self {
+        0
+    }
+    fn has(&self, v: u64) -> bool {
+        (*self & (v as u8)) != 0
+    }
+    fn set(&mut self, v: u64) {
+        *self |= v as u8
+    }
+}
 
 impl BinSerialize for u16 {
     fn encode_to(&self, buf: &mut dyn BufMut, attrs: Attrs) -> Result<()> {
@@ -57,6 +68,17 @@ impl BinDeserialize for u16 {
             Endian::Big => buf.get_u16(),
             Endian::Little => buf.get_u16_le(),
         })
+    }
+}
+impl BinFlags for u16 {
+    fn zero() -> Self {
+        0
+    }
+    fn has(&self, v: u64) -> bool {
+        (*self & (v as u16)) != 0
+    }
+    fn set(&mut self, v: u64) {
+        *self |= v as u16
     }
 }
 
@@ -97,6 +119,17 @@ impl BinDeserialize for u32 {
         })
     }
 }
+impl BinFlags for u32 {
+    fn zero() -> Self {
+        0
+    }
+    fn has(&self, v: u64) -> bool {
+        (*self & (v as u32)) != 0
+    }
+    fn set(&mut self, v: u64) {
+        *self |= v as u32
+    }
+}
 
 impl BinSerialize for i32 {
     fn encode_to(&self, buf: &mut dyn BufMut, attrs: Attrs) -> Result<()> {
@@ -133,6 +166,17 @@ impl BinDeserialize for u64 {
             Endian::Big => buf.get_u64(),
             Endian::Little => buf.get_u64_le(),
         })
+    }
+}
+impl BinFlags for u64 {
+    fn zero() -> Self {
+        0
+    }
+    fn has(&self, v: u64) -> bool {
+        (*self & v) != 0
+    }
+    fn set(&mut self, v: u64) {
+        *self |= v
     }
 }
 

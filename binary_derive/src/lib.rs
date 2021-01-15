@@ -320,7 +320,8 @@ fn encode_fields(
         Fields::Unnamed(u) => u.unnamed,
         Fields::Unit => return (generics, vec![]),
     };
-    let mut flags_defined = false;
+    let mut flags_ty = None;
+    let mut warned_for_no_flags = false;
     for (i, f) in fields.into_iter().enumerate() {
         let span = f.span();
         let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
@@ -359,16 +360,16 @@ fn encode_fields(
         let attrs = context.build_attrs();
 
         if context.self_attrs.flags {
-            if flags_defined {
+            if flags_ty.is_some() {
                 let span = f.span();
                 encodes.push(quote_spanned! {span=>
                     compile_error!("multiple #[binary(flags)] attributes in this struct");
                 });
             }
-            flags_defined = true;
+            flags_ty = Some(f.ty.clone());
             let ty = &f.ty;
             encodes.push(quote! {
-                let mut flags: #ty = 0;
+                let mut flags: #ty = <#ty as ::binary::BinFlags>::zero();
                 let mut flagged = vec![];
                 let unflagged_buf = buf;
                 let buf: &mut dyn ::binary::BufMut = &mut flagged;
@@ -378,10 +379,22 @@ fn encode_fields(
                 <::std::vec::Vec<u8> as ::binary::BinSerialize>::encode_to(&flagged, unflagged_buf, ::binary::attr::Attrs::zero())?;
             });
         } else if let Some(v) = context.self_attrs.flag_value {
-            let v = LitInt::new(v, IntSuffix::None, span);
+            let set = if flags_ty.is_none() {
+                if !warned_for_no_flags {
+                    warned_for_no_flags = true;
+                    let span = f.span();
+                    encodes.push(quote_spanned! {span=>
+                        compile_error!("no #[binary(flags)] attribute before this #[binary(flags(...))]");
+                    });
+                }
+                None
+            } else {
+                let v = LitInt::new(v, IntSuffix::None, span);
+                Some(quote! { <#flags_ty as ::binary::BinFlags>::set(&mut flags, #v); })
+            };
             encodes.push(quote! {
                 if let Some(v) = &#ident {
-                    flags |= #v;
+                    #set
                     ::binary::BinSerialize::encode_to(v, buf, #attrs)?;
                 }
             });
@@ -411,7 +424,8 @@ fn decode_fields(
         Fields::Unnamed(u) => &u.unnamed,
         Fields::Unit => return (generics, quote! {}, quote! {}, quote! {}),
     };
-    let mut flags_defined = false;
+    let mut flags_ty = None;
+    let mut warned_for_no_flags = false;
     for (i, f) in fields_list.into_iter().enumerate() {
         let ty = f.ty.clone();
         let (context, attr_errors) = context.recurse_into(Level::Field, &f.attrs);
@@ -448,9 +462,21 @@ fn decode_fields(
         let attrs = context.build_attrs();
         if let Some(v) = context.self_attrs.flag_value {
             let span = ident.span();
-            let v = LitInt::new(v, IntSuffix::None, span);
+            let has = if flags_ty.is_none() {
+                if !warned_for_no_flags {
+                    warned_for_no_flags = true;
+                    let span = f.span();
+                    decodes.push(quote_spanned! {span=>
+                        compile_error!("no #[binary(flags)] attribute before this #[binary(flags(...))]");
+                    });
+                }
+                quote! { false }
+            } else {
+                let v = LitInt::new(v, IntSuffix::None, span);
+                quote! { <#flags_ty as ::binary::BinFlags>::has(&flags, #v) }
+            };
             decodes.push(quote! {
-                let #ident = if (flags & #v) != 0 {
+                let #ident = if #has {
                     Some(<<#ty as ::binary::DeOption>::Assoc as ::binary::BinDeserialize>::decode_from(buf, #attrs)?)
                 } else {
                     None
@@ -465,13 +491,13 @@ fn decode_fields(
             #struct_ident#colon #ident,
         });
         if context.self_attrs.flags {
-            if flags_defined {
+            if flags_ty.is_some() {
                 let span = f.span();
                 decodes.push(quote_spanned! {span=>
                     compile_error!("multiple #[binary(flags)] attributes in this struct");
                 });
             }
-            flags_defined = true;
+            flags_ty = Some(f.ty.clone());
             decodes.push(quote! {
                 let flags = #ident;
             });
