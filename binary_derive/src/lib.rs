@@ -18,6 +18,7 @@ mod helpers;
 struct SelfAttrs {
     tag_ty: Option<(Type, IntSuffix)>, // enum, based on repr()
     tag_le: Option<bool>,              // enum
+    tag_default: bool,                 // enum field, which must be of type (tag_ty, Vec<u8>)
 
     nest_variants: bool,                // enum
     nest: bool,                         // enum variant, in enum with nest_variants true
@@ -96,14 +97,14 @@ fn make_generic_bound(ty: Type, bound: Path) -> WherePredicate {
 }
 
 fn encode_type(
-    context: Context,
+    parent_context: Context,
     mut generics: Generics,
     data: Data,
     ident: &Ident,
 ) -> (Generics, TokenStream2) {
     match data {
         Data::Struct(s) => {
-            let (generics, fields) = encode_fields(&context, generics, s.fields);
+            let (generics, fields) = encode_fields(&parent_context, generics, s.fields);
             (
                 generics,
                 quote! {
@@ -114,7 +115,7 @@ fn encode_type(
         Data::Enum(e) => {
             let mut variants: Vec<TokenStream2> = vec![];
 
-            if context.self_attrs.tag_ty.is_none() {
+            if parent_context.self_attrs.tag_ty.is_none() {
                 let span = ident.span();
                 return (
                     generics,
@@ -124,60 +125,83 @@ fn encode_type(
                 );
             }
 
-            let tag_ty = context.self_attrs.tag_ty.clone().unwrap();
+            let tag_ty = parent_context.self_attrs.tag_ty.clone().unwrap();
             let mut tag = 0u64;
+            let mut default_defined = false;
 
             for v in e.variants {
-                tag = match helpers::find_discriminant(&v) {
-                    Ok(Some(v)) => v,
-                    Ok(None) => tag,
-                    Err(e) => {
-                        variants.push(e);
-                        tag
+                let (context, attr_errors) = parent_context.recurse_into(Level::Variant, &v.attrs);
+                let name = &v.ident;
+
+                if context.self_attrs.tag_default {
+                    let errors = if default_defined {
+                        let span = name.span();
+                        Some(quote_spanned! {span=>
+                            compile_error!("multiple variants with a #[binary(default)] attribute found");
+                        })
+                    } else {
+                        None
+                    };
+                    default_defined = true;
+                    let tag_ty = &tag_ty.0;
+                    let attrs = helpers::build_tag_attrs(parent_context.self_attrs.tag_le);
+                    variants.push(quote! {
+                        #ident::#name(tag, vec) => {
+                            #attr_errors
+                            #errors
+                            <#tag_ty as ::binary::BinSerialize>::encode_to(tag, buf, #attrs)?;
+                            <::std::vec::Vec<u8> as ::binary::BinSerialize>::encode_to(vec, buf, #attrs)?;
+                        }
+                    });
+                } else {
+                    tag = match helpers::find_discriminant(&v) {
+                        Ok(Some(v)) => v,
+                        Ok(None) => tag,
+                        Err(e) => {
+                            variants.push(e);
+                            tag
+                        }
+                    };
+                    let header = {
+                        let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
+                        let attrs = helpers::build_tag_attrs(parent_context.self_attrs.tag_le);
+                        quote! {
+                            ::binary::BinSerialize::encode_to(&#tag_lit, buf, #attrs)?;
+                        }
+                    };
+                    tag += 1;
+
+                    let fields = pattern_fields(&v.fields);
+
+                    let (newgen, encodes) = encode_fields(&context, generics, v.fields);
+                    let mut encodes = quote! { #(#encodes)* };
+
+                    if context.self_attrs.nest {
+                        let attrs = helpers::build_nest_attrs(
+                            context.self_attrs.nest_le,
+                            context.self_attrs.nest_ty.unwrap(),
+                        );
+                        encodes = quote! {
+                            let nested = {
+                                let mut v = vec![];
+                                let buf: &mut dyn ::binary::BufMut = &mut v;
+                                #encodes
+                                v
+                            };
+                            ::binary::BinSerialize::encode_to(&nested, buf, #attrs)?;
+                        }
                     }
-                };
-                let header = {
-                    let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
-                    let attrs = helpers::build_tag_attrs(context.self_attrs.tag_le);
-                    quote! {
-                        ::binary::BinSerialize::encode_to(&#tag_lit, buf, #attrs)?;
-                    }
-                };
-                tag += 1;
 
-                let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
+                    generics = newgen;
 
-                let name = v.ident;
-                let fields = pattern_fields(&v.fields);
-
-                let (newgen, encodes) = encode_fields(&context, generics, v.fields);
-                let mut encodes = quote! { #(#encodes)* };
-
-                if context.self_attrs.nest {
-                    let attrs = helpers::build_nest_attrs(
-                        context.self_attrs.nest_le,
-                        context.self_attrs.nest_ty.unwrap(),
-                    );
-                    encodes = quote! {
-                        let nested = {
-                            let mut v = vec![];
-                            let buf: &mut dyn ::binary::BufMut = &mut v;
-                            #encodes
-                            v
-                        };
-                        ::binary::BinSerialize::encode_to(&nested, buf, #attrs)?;
-                    }
+                    variants.push(quote! {
+                        #ident::#name#fields => {
+                            #header
+                            #(#encodes)*
+                            #attr_errors
+                        }
+                    });
                 }
-
-                generics = newgen;
-
-                variants.push(quote! {
-                    #ident::#name#fields => {
-                        #header
-                        #(#encodes)*
-                        #attr_errors
-                    }
-                });
             }
             let encode = quote! {
                 match self {
@@ -254,52 +278,74 @@ fn decode_type(
 
             let tag_ty = context.self_attrs.tag_ty.clone().unwrap();
             let mut tag = 0u64;
+            let mut default_variant = None;
 
             for v in e.variants {
-                tag = match helpers::find_discriminant(&v) {
-                    Ok(Some(v)) => v,
-                    Ok(None) => tag,
-                    Err(e) => {
-                        variants.push(e);
-                        tag
-                    }
-                };
-                let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
-                tag += 1;
                 let (context, attr_errors) = context.recurse_into(Level::Variant, &v.attrs);
-                let name = v.ident;
-                let (newgen, decodes, transfers, errors) =
-                    decode_fields(&context, generics, v.fields);
-                generics = newgen;
-
-                let pre = if context.self_attrs.nest {
-                    let attrs = helpers::build_nest_attrs(
-                        context.self_attrs.nest_le,
-                        context.self_attrs.nest_ty.unwrap(),
-                    );
-                    Some(quote! {
-                        let v = <Vec<u8> as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
-                        let buf: &mut dyn ::binary::Buf = &mut v.as_slice();
-                    })
+                let name = &v.ident;
+                if context.self_attrs.tag_default {
+                    let errors = default_variant.as_ref().map(|_| {
+                        let span = name.span();
+                        quote_spanned!{span=>
+                            compile_error!("multiple variants with a #[binary(default)] attribute found");
+                        }
+                    });
+                    default_variant = Some(quote! {
+                        _ => {
+                            #errors
+                            let vec = <::std::vec::Vec<u8> as ::binary::BinDeserialize>::decode_from(buf, ::binary::attr::Attrs::zero())?;
+                            #ident::#name(variant, vec)
+                        }
+                    });
                 } else {
-                    None
-                };
+                    tag = match helpers::find_discriminant(&v) {
+                        Ok(Some(v)) => v,
+                        Ok(None) => tag,
+                        Err(e) => {
+                            variants.push(e);
+                            tag
+                        }
+                    };
+                    let tag_lit = LitInt::new(tag, tag_ty.1.clone(), v.span());
+                    tag += 1;
+                    let (newgen, decodes, transfers, errors) =
+                        decode_fields(&context, generics, v.fields);
+                    generics = newgen;
 
-                variants.push(quote! {
-                    #tag_lit => {
-                        #attr_errors
-                        #errors
-                        #pre
-                        #decodes
-                        #ident::#name#transfers
-                    }
-                });
+                    let pre = if context.self_attrs.nest {
+                        let attrs = helpers::build_nest_attrs(
+                            context.self_attrs.nest_le,
+                            context.self_attrs.nest_ty.unwrap(),
+                        );
+                        Some(quote! {
+                            let v = <Vec<u8> as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
+                            let buf: &mut dyn ::binary::Buf = &mut v.as_slice();
+                        })
+                    } else {
+                        None
+                    };
+
+                    variants.push(quote! {
+                        #tag_lit => {
+                            #attr_errors
+                            #errors
+                            #pre
+                            #decodes
+                            #ident::#name#transfers
+                        }
+                    });
+                }
+            }
+            if default_variant.is_none() {
+                default_variant = Some(quote! {
+                    _ => return Err(::binary::BinError::VariantNotMatched(variant as u64))
+                })
             }
             let decode = quote! {
                 #header
                 match variant {
                     #(#variants)*
-                    _ => return Err(::binary::BinError::VariantNotMatched(variant as u64))
+                    #default_variant
                 }
             };
             (generics, decode)

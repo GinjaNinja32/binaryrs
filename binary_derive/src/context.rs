@@ -53,6 +53,7 @@ impl Context {
             self_attrs: SelfAttrs {
                 tag_ty: None,
                 tag_le: None,
+                tag_default: false,
                 nest: false,
                 nest_variants: false,
                 nest_ty: None,

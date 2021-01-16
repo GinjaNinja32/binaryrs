@@ -196,6 +196,34 @@ fn test_flags() {
     );
 }
 
+#[test]
+fn test_default_variant() {
+    #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
+    #[repr(u16)]
+    #[binary(tag(big))]
+    enum DefaultVariant {
+        A(u64),
+        B(u32),
+        C(u16),
+        #[binary(default)]
+        Unknown(u16, Vec<u8>),
+    }
+
+    roundtrip!(
+        DefaultVariant::A(0x1122334455667788),
+        vec![0, 0, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
+    );
+    roundtrip!(
+        DefaultVariant::B(0x11223344),
+        vec![0, 1, 0x44, 0x33, 0x22, 0x11]
+    );
+    roundtrip!(DefaultVariant::C(0x1122), vec![0, 2, 0x22, 0x11]);
+    roundtrip!(
+        DefaultVariant::Unknown(42, vec![1, 2, 3, 4]),
+        vec![0, 42, 1, 2, 3, 4]
+    );
+}
+
 #[derive(BinSerialize, BinDeserialize, PartialEq, Eq, Debug)]
 struct TestStruct {
     #[binary(len(u8))]

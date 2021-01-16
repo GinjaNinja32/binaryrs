@@ -67,6 +67,7 @@ pub(crate) fn parse_attrs(
     let mut self_attrs = SelfAttrs {
         tag_ty: None,
         tag_le: None,
+        tag_default: false,
         nest: false,
         nest_variants: false,
         nest_ty: None,
@@ -152,6 +153,15 @@ pub(crate) fn parse_attrs(
                                                 });
                                             } else {
                                                 self_attrs.flags = true;
+                                            }
+                                        }
+                                        "default" => {
+                                            if context != (Environment::Enum, Level::Variant) {
+                                                errors.push(quote_spanned! {span=>
+                                                    compile_error!("illegal attribute target");
+                                                });
+                                            } else {
+                                                self_attrs.tag_default = true;
                                             }
                                         }
                                         _ => {
