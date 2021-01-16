@@ -335,3 +335,20 @@ where
         Ok(())
     }
 }
+
+impl<T> BinDeserialize for Box<T>
+where
+    T: BinDeserialize,
+{
+    fn decode_from(buf: &mut dyn Buf, attrs: Attrs) -> Result<Self> {
+        Ok(Box::new(T::decode_from(buf, attrs)?))
+    }
+}
+impl<T> BinSerialize for Box<T>
+where
+    T: BinSerialize,
+{
+    fn encode_to(&self, buf: &mut dyn BufMut, attrs: Attrs) -> Result<()> {
+        T::encode_to(self, buf, attrs)
+    }
+}
