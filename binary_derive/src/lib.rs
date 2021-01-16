@@ -425,6 +425,7 @@ fn decode_fields(
         Fields::Unit => return (generics, quote! {}, quote! {}, quote! {}),
     };
     let mut flags_ty = None;
+    let mut flags_field = None;
     let mut warned_for_no_flags = false;
     for (i, f) in fields_list.into_iter().enumerate() {
         let ty = f.ty.clone();
@@ -473,7 +474,7 @@ fn decode_fields(
                 quote! { false }
             } else {
                 let v = LitInt::new(v, IntSuffix::None, span);
-                quote! { <#flags_ty as ::binary::BinFlags>::has(&flags, #v) }
+                quote! { <#flags_ty as ::binary::BinFlags>::has(&#flags_field, #v) }
             };
             decodes.push(quote! {
                 let #ident = if #has {
@@ -498,9 +499,7 @@ fn decode_fields(
                 });
             }
             flags_ty = Some(f.ty.clone());
-            decodes.push(quote! {
-                let flags = #ident;
-            });
+            flags_field = Some(ident);
         }
         errors.push(attr_errors);
     }
