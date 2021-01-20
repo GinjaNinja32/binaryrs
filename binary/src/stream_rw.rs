@@ -1,4 +1,3 @@
-
 use crate::Result;
 
 macro_rules! get_stdnum_be {
@@ -8,7 +7,7 @@ macro_rules! get_stdnum_be {
             self.read_exact(&mut data)?;
             Ok(<$ty>::from_be_bytes(data))
         }
-    }
+    };
 }
 macro_rules! get_stdnum_le {
     ($name:ident,$ty:ty) => {
@@ -17,10 +16,10 @@ macro_rules! get_stdnum_le {
             self.read_exact(&mut data)?;
             Ok(<$ty>::from_le_bytes(data))
         }
-    }
+    };
 }
 
-pub trait BinRead: std::io::Read {
+pub trait BinRead: std::io::BufRead {
     get_stdnum_be!(get_f32_be, f32);
     get_stdnum_le!(get_f32_le, f32);
     get_stdnum_be!(get_f64_be, f64);
@@ -40,7 +39,7 @@ pub trait BinRead: std::io::Read {
     get_stdnum_be!(get_u64_be, u64);
     get_stdnum_le!(get_u64_le, u64);
 }
-impl<T: std::io::Read> BinRead for T {}
+impl<T: std::io::BufRead> BinRead for T {}
 
 macro_rules! put_stdnum_be {
     ($name:ident,$ty:ty) => {
@@ -48,7 +47,7 @@ macro_rules! put_stdnum_be {
             let data = v.to_be_bytes();
             Ok(self.write_all(&data)?)
         }
-    }
+    };
 }
 macro_rules! put_stdnum_le {
     ($name:ident,$ty:ty) => {
@@ -56,7 +55,7 @@ macro_rules! put_stdnum_le {
             let data = v.to_le_bytes();
             Ok(self.write_all(&data)?)
         }
-    }
+    };
 }
 
 pub trait BinWrite: std::io::Write {
