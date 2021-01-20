@@ -42,7 +42,7 @@ pub fn derive_binserialize(input: TokenStream) -> TokenStream {
     let s = quote! {
         #[automatically_derived]
         impl#impl_generics ::binary::BinSerialize for #ident#ty_generics #where_clause {
-            fn encode_to(&self, buf: &mut dyn ::binary::BufMut, attrs: ::binary::attr::Attrs) -> ::binary::Result<()> {
+            fn encode_to(&self, buf: &mut dyn ::binary::BinWrite, attrs: ::binary::attr::Attrs) -> ::binary::Result<()> {
                 #fields
                 Ok(())
             }
@@ -67,7 +67,7 @@ pub fn derive_bindeserialize(input: TokenStream) -> TokenStream {
     let s = quote! {
         #[automatically_derived]
         impl#impl_generics ::binary::BinDeserialize for #ident#ty_generics #where_clause {
-            fn decode_from(buf: &mut dyn ::binary::Buf, attrs: ::binary::attr::Attrs) -> ::binary::Result<Self> {
+            fn decode_from(buf: &mut dyn ::binary::BinRead, attrs: ::binary::attr::Attrs) -> ::binary::Result<Self> {
                 Ok({
                     #fields
                 })
@@ -184,7 +184,7 @@ fn encode_type(
                         encodes = quote! {
                             let nested = {
                                 let mut v = vec![];
-                                let buf: &mut dyn ::binary::BufMut = &mut v;
+                                let buf: &mut dyn ::binary::BinWrite = &mut v;
                                 #encodes
                                 v
                             };
@@ -319,7 +319,7 @@ fn decode_type(
                         );
                         Some(quote! {
                             let v = <Vec<u8> as ::binary::BinDeserialize>::decode_from(buf, #attrs)?;
-                            let buf: &mut dyn ::binary::Buf = &mut v.as_slice();
+                            let buf: &mut dyn ::binary::BinRead = &mut v.as_slice();
                         })
                     } else {
                         None
@@ -418,7 +418,7 @@ fn encode_fields(
                 let mut flags: #ty = <#ty as ::binary::BinFlags>::zero();
                 let mut flagged = vec![];
                 let unflagged_buf = buf;
-                let buf: &mut dyn ::binary::BufMut = &mut flagged;
+                let buf: &mut dyn ::binary::BinWrite = &mut flagged;
             });
             tail = Some(quote! {
                 <#ty as ::binary::BinSerialize>::encode_to(&flags, unflagged_buf, #attrs)?;

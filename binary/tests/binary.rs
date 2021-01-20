@@ -244,6 +244,6 @@ fn test_encode_error() {
 fn test_decode_error() {
     assert_eq!(
         binary::decode_from_bytes::<TestStruct>(&[3, 1, 2]),
-        Err(binary::BinError::InsufficientData(1))
+        Err(binary::BinError::InsufficientData)
     );
 }

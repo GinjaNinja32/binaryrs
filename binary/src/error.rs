@@ -5,15 +5,14 @@ pub type Result<T> = std::result::Result<T, BinError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinError {
-    // There was insufficient data to successfully deserialize the data.
-    // The parameter indicates how much data is required in order to make further progress (i.e. to finish decoding
-    // the field that required more data). It may be zero to denote that the amount of data required is unknown.
-    InsufficientData(usize),
+    // There was insufficient data to successfully deserialize the type.
+    InsufficientData,
     // A variant tag was parsed that did not correspond to a known enum variant.
     // The parameter indicates the invalid variant tag.
     VariantNotMatched(u64),
     IntTooLarge(TryFromIntError),
     InvalidUTF8(FromUtf8Error),
+    IOError(String),
 }
 
 impl From<TryFromIntError> for BinError {
@@ -25,5 +24,16 @@ impl From<TryFromIntError> for BinError {
 impl From<FromUtf8Error> for BinError {
     fn from(other: FromUtf8Error) -> Self {
         Self::InvalidUTF8(other)
+    }
+}
+
+impl From<std::io::Error> for BinError {
+    fn from(other: std::io::Error) -> Self {
+        let s = format!("{}", other);
+        if s == "failed to fill whole buffer" {
+            Self::InsufficientData
+        } else {
+            Self::IOError(s)
+        }
     }
 }

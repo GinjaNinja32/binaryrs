@@ -1,8 +1,8 @@
 mod de;
-pub use de::{decode_from_bytes, BinDeserialize};
+pub use de::{decode_from_bytes, decode_from_stream, BinDeserialize};
 
 mod ser;
-pub use ser::{encode_to_bytes, BinSerialize};
+pub use ser::{encode_to_bytes, encode_to_stream, BinSerialize};
 
 pub mod attr;
 
@@ -11,19 +11,10 @@ pub use error::{BinError, Result};
 
 mod impls;
 
-pub use binary_derive::{BinDeserialize, BinSerialize};
+mod stream_rw;
+pub use stream_rw::{BinRead, BinWrite};
 
-pub use bytes::BufMut;
-pub trait Buf: bytes::Buf {
-    fn req(&self, len: usize) -> Result<()> {
-        if self.remaining() < len {
-            Err(BinError::InsufficientData(len - self.remaining()))
-        } else {
-            Ok(())
-        }
-    }
-}
-impl<T: bytes::Buf> Buf for T {}
+pub use binary_derive::{BinDeserialize, BinSerialize};
 
 pub trait BinFlags {
     fn zero() -> Self;

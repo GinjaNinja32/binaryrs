@@ -17,14 +17,14 @@ impl Attrs {
         }
     }
 
-    pub fn encode_length(&self, buf: &mut dyn crate::BufMut, len: u64) -> Result<()> {
+    pub fn encode_length(&self, buf: &mut dyn crate::BinWrite, len: u64) -> Result<()> {
         if self.len.is_none() {
             return Ok(());
         }
         self.len.unwrap().encode(len, buf, self.len_endian)
     }
 
-    pub fn decode_length(&self, buf: &mut dyn crate::Buf) -> Result<Option<u64>> {
+    pub fn decode_length(&self, buf: &mut dyn crate::BinRead) -> Result<Option<u64>> {
         if self.len.is_none() {
             return Ok(None);
         }
@@ -45,17 +45,17 @@ pub enum Len {
 }
 
 impl Len {
-    pub fn encode(&self, v: u64, buf: &mut dyn crate::BufMut, endian: Endian) -> Result<()> {
+    pub fn encode(&self, v: u64, buf: &mut dyn crate::BinWrite, endian: Endian) -> Result<()> {
         match endian {
             Endian::Big => match self {
                 Len::U8 => buf.put_u8(v.try_into()?),
-                Len::U16 => buf.put_u16(v.try_into()?),
-                Len::U32 => buf.put_u32(v.try_into()?),
-                Len::U64 => buf.put_u64(v),
+                Len::U16 => buf.put_u16_be(v.try_into()?),
+                Len::U32 => buf.put_u32_be(v.try_into()?),
+                Len::U64 => buf.put_u64_be(v),
                 Len::I8 => buf.put_i8(v.try_into()?),
-                Len::I16 => buf.put_i16(v.try_into()?),
-                Len::I32 => buf.put_i32(v.try_into()?),
-                Len::I64 => buf.put_i64(v.try_into()?),
+                Len::I16 => buf.put_i16_be(v.try_into()?),
+                Len::I32 => buf.put_i32_be(v.try_into()?),
+                Len::I64 => buf.put_i64_be(v.try_into()?),
             },
             Endian::Little => match self {
                 Len::U8 => buf.put_u8(v.try_into()?),
@@ -68,35 +68,28 @@ impl Len {
                 Len::I64 => buf.put_i64_le(v.try_into()?),
             },
         }
-        Ok(())
     }
-    pub fn decode(&self, buf: &mut dyn crate::Buf, endian: Endian) -> Result<u64> {
-        match self {
-            Len::U8 | Len::I8 => buf.req(1)?,
-            Len::U16 | Len::I16 => buf.req(2)?,
-            Len::U32 | Len::I32 => buf.req(4)?,
-            Len::U64 | Len::I64 => buf.req(8)?,
-        }
+    pub fn decode(&self, buf: &mut dyn crate::BinRead, endian: Endian) -> Result<u64> {
         let v = match endian {
             Endian::Big => match self {
-                Len::U8 => buf.get_u8() as u64,
-                Len::U16 => buf.get_u16() as u64,
-                Len::U32 => buf.get_u32() as u64,
-                Len::U64 => buf.get_u64(),
-                Len::I8 => buf.get_i8().try_into()?,
-                Len::I16 => buf.get_i16().try_into()?,
-                Len::I32 => buf.get_i32().try_into()?,
-                Len::I64 => buf.get_i64().try_into()?,
+                Len::U8 => buf.get_u8()? as u64,
+                Len::U16 => buf.get_u16_be()? as u64,
+                Len::U32 => buf.get_u32_be()? as u64,
+                Len::U64 => buf.get_u64_be()?,
+                Len::I8 => buf.get_i8()?.try_into()?,
+                Len::I16 => buf.get_i16_be()?.try_into()?,
+                Len::I32 => buf.get_i32_be()?.try_into()?,
+                Len::I64 => buf.get_i64_be()?.try_into()?,
             },
             Endian::Little => match self {
-                Len::U8 => buf.get_u8() as u64,
-                Len::U16 => buf.get_u16_le() as u64,
-                Len::U32 => buf.get_u32_le() as u64,
-                Len::U64 => buf.get_u64_le(),
-                Len::I8 => buf.get_i8().try_into()?,
-                Len::I16 => buf.get_i16_le().try_into()?,
-                Len::I32 => buf.get_i32_le().try_into()?,
-                Len::I64 => buf.get_i64_le().try_into()?,
+                Len::U8 => buf.get_u8()? as u64,
+                Len::U16 => buf.get_u16_le()? as u64,
+                Len::U32 => buf.get_u32_le()? as u64,
+                Len::U64 => buf.get_u64_le()?,
+                Len::I8 => buf.get_i8()?.try_into()?,
+                Len::I16 => buf.get_i16_le()?.try_into()?,
+                Len::I32 => buf.get_i32_le()?.try_into()?,
+                Len::I64 => buf.get_i64_le()?.try_into()?,
             },
         };
         Ok(v)
