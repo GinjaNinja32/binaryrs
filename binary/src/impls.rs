@@ -1,5 +1,5 @@
 use crate::attr::{Attrs, Endian};
-use crate::{BinDeserialize, BinError, BinFlags, BinSerialize, BinRead, BinWrite, Result};
+use crate::{BinDeserialize, BinError, BinFlags, BinRead, BinSerialize, BinWrite, Result};
 use std::convert::TryInto;
 
 impl BinSerialize for bool {
@@ -325,5 +325,16 @@ where
 {
     fn encode_to(&self, buf: &mut dyn BinWrite, attrs: Attrs) -> Result<()> {
         T::encode_to(self, buf, attrs)
+    }
+}
+
+impl BinSerialize for () {
+    fn encode_to(&self, buf: &mut dyn BinWrite, attrs: Attrs) -> Result<()> {
+        Ok(())
+    }
+}
+impl BinDeserialize for () {
+    fn decode_from(buf: &mut dyn BinRead, attrs: Attrs) -> Result<Self> {
+        Ok(())
     }
 }
