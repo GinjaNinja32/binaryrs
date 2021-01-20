@@ -15,6 +15,13 @@ pub enum BinError {
     IOError(String),
 }
 
+impl std::error::Error for BinError {}
+impl std::fmt::Display for BinError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl From<TryFromIntError> for BinError {
     fn from(other: TryFromIntError) -> Self {
         Self::IntTooLarge(other)
