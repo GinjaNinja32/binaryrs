@@ -329,12 +329,12 @@ where
 }
 
 impl BinSerialize for () {
-    fn encode_to(&self, buf: &mut dyn BinWrite, attrs: Attrs) -> Result<()> {
+    fn encode_to(&self, _buf: &mut dyn BinWrite, _attrs: Attrs) -> Result<()> {
         Ok(())
     }
 }
 impl BinDeserialize for () {
-    fn decode_from(buf: &mut dyn BinRead, attrs: Attrs) -> Result<Self> {
+    fn decode_from(_buf: &mut dyn BinRead, _attrs: Attrs) -> Result<Self> {
         Ok(())
     }
 }
