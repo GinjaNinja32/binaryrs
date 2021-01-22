@@ -13,6 +13,8 @@ pub enum BinError {
     IntTooLarge(TryFromIntError),
     InvalidUTF8(FromUtf8Error),
     IOError(String),
+
+    Custom(String),
 }
 
 impl std::error::Error for BinError {}
