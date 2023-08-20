@@ -95,7 +95,7 @@ fn test_enum_plain() {
 #[test]
 fn test_enum_fields() {
     #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
-    #[repr(u8)]
+    #[binary(tag(u8))]
     enum Fields {
         A,
         B(u8, String),
@@ -199,8 +199,7 @@ fn test_flags() {
 #[test]
 fn test_default_variant() {
     #[derive(BinSerialize, BinDeserialize, Debug, PartialEq, Eq)]
-    #[repr(u16)]
-    #[binary(tag(big))]
+    #[binary(tag(big, u16))]
     enum DefaultVariant {
         A(u64),
         B(u32),

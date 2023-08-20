@@ -415,7 +415,7 @@ fn encode_fields(
             flags_ty = Some(f.ty.clone());
             let ty = &f.ty;
             encodes.push(quote! {
-                let mut flags: #ty = <#ty as ::binary::BinFlags>::zero();
+                let mut flags: #ty = <#ty as ::binary::BinFlags>::ZERO;
                 let mut flagged = vec![];
                 let unflagged_buf = buf;
                 let buf: &mut dyn ::binary::BinWrite = &mut flagged;

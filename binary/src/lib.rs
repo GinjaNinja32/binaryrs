@@ -17,7 +17,7 @@ pub use stream_rw::{BinRead, BinWrite};
 pub use binary_derive::{BinDeserialize, BinSerialize};
 
 pub trait BinFlags {
-    fn zero() -> Self;
+    const ZERO: Self;
     fn has(&self, v: u64) -> bool;
     fn set(&mut self, v: u64);
 }

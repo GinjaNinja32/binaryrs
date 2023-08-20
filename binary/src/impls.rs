@@ -35,9 +35,7 @@ impl BinDeserialize for u8 {
     }
 }
 impl BinFlags for u8 {
-    fn zero() -> Self {
-        0
-    }
+    const ZERO: Self = 0;
     fn has(&self, v: u64) -> bool {
         (*self & (v as u8)) != 0
     }
@@ -63,9 +61,7 @@ impl BinDeserialize for u16 {
     }
 }
 impl BinFlags for u16 {
-    fn zero() -> Self {
-        0
-    }
+    const ZERO: Self = 0;
     fn has(&self, v: u64) -> bool {
         (*self & (v as u16)) != 0
     }
@@ -108,9 +104,7 @@ impl BinDeserialize for u32 {
     }
 }
 impl BinFlags for u32 {
-    fn zero() -> Self {
-        0
-    }
+    const ZERO: Self = 0;
     fn has(&self, v: u64) -> bool {
         (*self & (v as u32)) != 0
     }
@@ -153,9 +147,7 @@ impl BinDeserialize for u64 {
     }
 }
 impl BinFlags for u64 {
-    fn zero() -> Self {
-        0
-    }
+    const ZERO: Self = 0;
     fn has(&self, v: u64) -> bool {
         (*self & v) != 0
     }

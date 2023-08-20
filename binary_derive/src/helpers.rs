@@ -103,20 +103,17 @@ pub(crate) fn parse_attrs(
                     }
                     for elem in &l.nested {
                         match elem {
-                            NestedMeta::Meta(m) => match &m {
-                                Meta::Word(w) => {
-                                    let span = w.span();
-                                    match parse_size_attr_arg(w) {
-                                        Ok(Some(v)) => self_attrs.tag_ty = Some(v.to_type_suffix()),
-                                        Ok(None) => continue,
-                                        Err(None) => errors.push(quote_spanned! {span=>
-                                            compile_error!("unknown attribute");
-                                        }),
-                                        Err(Some(v)) => errors.push(v),
-                                    }
+                            NestedMeta::Meta(Meta::Word(w)) => {
+                                let span = w.span();
+                                match parse_size_attr_arg(w) {
+                                    Ok(Some(v)) => self_attrs.tag_ty = Some(v.to_type_suffix()),
+                                    Ok(None) => continue,
+                                    Err(None) => errors.push(quote_spanned! {span=>
+                                        compile_error!("unknown attribute");
+                                    }),
+                                    Err(Some(v)) => errors.push(v),
                                 }
-                                _ => continue, // ignore, this isn't our attr to complain about
-                            },
+                            }
                             _ => continue, // ignore, this isn't our attr to complain about
                         }
                     }
